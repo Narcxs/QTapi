@@ -1,0 +1,4 @@
+# Telegram bot only (the API server does NOT need this).
+# Install on the machine/service that runs `python -m app.bot`:
+#   ./venv/bin/pip install -r requirements-bot.txt
+python-telegram-bot>=21,<22

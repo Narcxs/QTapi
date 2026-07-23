@@ -25,7 +25,7 @@ Query params:
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from . import config, store
+from . import config, store, tokens
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -36,13 +36,20 @@ _CACHE_HEADERS = {"Cache-Control": f"public, max-age={max(1, int(config.POLL_INT
 
 
 def _auth_ok(token: str) -> bool:
-    required = config.DATA_API_TOKEN
-    return (not required) or (token == required)
+    # If per-user tokens are required, accept the master token OR a valid
+    # bot-issued token. If not required, the API is open.
+    if not config.REQUIRE_TOKEN:
+        return True
+    if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
+        return True
+    return tokens.validate(token).get("ok", False)
 
 
 def _deny():
     return JSONResponse(
-        {"error": "unauthorized", "hint": "pass ?token=<DATA_API_TOKEN>"}, 401)
+        {"error": "unauthorized",
+         "hint": "get your free token from our Telegram bot, then add ?token=..."},
+        401)
 
 
 def _serve(package: str, instrument: str, period, raw: bool, future: bool):

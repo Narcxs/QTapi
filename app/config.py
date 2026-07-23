@@ -97,3 +97,23 @@ SUB_CACHE_TTL = int(os.getenv("SUB_CACHE_TTL", "300"))
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8787"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ---------------------------------------------------------------------------
+# Per-user API tokens
+# ---------------------------------------------------------------------------
+# When on, every /api request must carry a valid ?token=... (one token = one
+# user, issued by the Telegram bot). Turn it on AFTER your bot is running.
+REQUIRE_TOKEN = os.getenv("REQUIRE_TOKEN", "0") == "1"
+# File where issued tokens are stored (shared between the API and the bot).
+TOKENS_FILE = os.getenv("TOKENS_FILE", os.path.join(DATA_DIR, "tokens.json"))
+# Public URL shown to users by the bot.
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", f"http://127.0.0.1:{SERVER_PORT}")
+# How long an issued token is valid (days).
+TOKEN_VALID_DAYS = int(os.getenv("TOKEN_VALID_DAYS", "7"))
+
+# ---------------------------------------------------------------------------
+# Telegram bot
+# ---------------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_ADMIN_ID = int(os.getenv("TELEGRAM_ADMIN_ID", "0") or 0)
+TELEGRAM_GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0") or 0)
