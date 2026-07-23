@@ -65,8 +65,11 @@ DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
 DATA_API_TOKEN = os.getenv("DATA_API_TOKEN", "").strip()
 
 # ---------------------------------------------------------------------------
-# Hostinger MySQL (subscriptions)
+# Subscriptions (OPTIONAL) - off by default => free / open API, no MySQL needed
 # ---------------------------------------------------------------------------
+REQUIRE_SUBSCRIPTION = os.getenv("REQUIRE_SUBSCRIPTION", "0") == "1"
+
+# Hostinger MySQL (only used when REQUIRE_SUBSCRIPTION=1)
 DB_HOST = os.getenv("DB_HOST", "")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "")

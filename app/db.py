@@ -9,13 +9,18 @@ See schema.sql for a ready-to-run definition.
 import logging
 from datetime import datetime
 
-import mysql.connector
-from mysql.connector import pooling
-
 from . import config
 
 log = logging.getLogger("db")
 _pool = None
+
+# mysql-connector is OPTIONAL: only imported if REQUIRE_SUBSCRIPTION is enabled,
+# so the server runs (and installs) fine without the package.
+try:
+    from mysql.connector import pooling
+    _HAVE_MYSQL = True
+except Exception:  # noqa: BLE001
+    _HAVE_MYSQL = False
 
 
 def _get_pool():
@@ -38,6 +43,8 @@ def verify_key(license_key: str) -> dict:
     """Blocking DB check. Returns {"ok","reason","expires_at"}.
     reason: OK | NO_KEY | INVALID | INACTIVE | EXPIRED | DB_ERROR
     Called from FastAPI via asyncio.to_thread so it never blocks the loop."""
+    if not _HAVE_MYSQL:
+        return {"ok": False, "reason": "MYSQL_NOT_INSTALLED", "expires_at": None}
     if not license_key:
         return {"ok": False, "reason": "NO_KEY", "expires_at": None}
 

@@ -1,5 +1,8 @@
 fastapi==0.111.0
 uvicorn[standard]==0.30.1
 httpx==0.27.0
-mysql-connector-python==8.4.0
 python-dotenv==1.0.1
+
+# Optional: only needed if you turn on subscription checks (REQUIRE_SUBSCRIPTION=1).
+# Uncomment then re-run pip install.
+# mysql-connector-python==8.4.0

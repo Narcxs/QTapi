@@ -58,6 +58,9 @@ async def _shutdown():
 # subscription
 # --------------------------------------------------------------------------- #
 async def verify_cached(key: str) -> dict:
+    # Free / open API: no subscription check, no MySQL touched.
+    if not config.REQUIRE_SUBSCRIPTION:
+        return {"ok": True, "reason": "OPEN", "expires_at": None}
     res, fresh = _sub_cache.get(key)
     if fresh:
         return res
