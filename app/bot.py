@@ -89,11 +89,12 @@ async def _issue_and_text(user) -> str:
 
 
 def _token_msg(token: str, rec: dict) -> str:
+    # HTML (not Markdown): tokens contain "_" which breaks Markdown parsing.
     base = config.PUBLIC_BASE_URL.rstrip("/")
     return (
         f"✅ Your API token (valid until {tokens.fmt_exp(rec)}):\n\n"
-        f"`{token}`\n\n"
-        f"Use it by adding `?token=...` to any endpoint, e.g.:\n"
+        f"<code>{token}</code>\n\n"
+        f"Add <code>?token=...</code> to any endpoint, e.g.:\n"
         f"{base}/api/classic/spx/zero?token={token}\n\n"
         f"Keep it private — it is tied to your account."
     )
@@ -126,14 +127,14 @@ async def cmd_token(update: Update, context):
         await update.message.reply_text("🔒 Send me /token in a PRIVATE chat so your token stays secret.")
         return
     if await _is_member(context, user.id):
-        await update.message.reply_text(await _issue_and_text(user), parse_mode="Markdown")
+        await update.message.reply_text(await _issue_and_text(user), parse_mode="HTML")
         return
     # not a member -> offer to join, then verify with a button
     await update.message.reply_text(
         "🔒 To get your free API token you must join our group first.\n\n"
-        "1️⃣ Tap *Join the group*\n"
-        "2️⃣ Then tap *✅ Check my entry*",
-        parse_mode="Markdown",
+        "1️⃣ Tap <b>Join the group</b>\n"
+        "2️⃣ Then tap <b>✅ Check my entry</b>",
+        parse_mode="HTML",
         reply_markup=await _join_keyboard(context),
     )
 
@@ -144,10 +145,11 @@ async def cb_check_entry(update: Update, context):
     user = q.from_user
     if await _is_member(context, user.id):
         await q.answer("✅ Verified!")
+        msg = await _issue_and_text(user)
         try:
-            await q.edit_message_text(await _issue_and_text(user), parse_mode="Markdown")
-        except Exception:  # noqa: BLE001 - message may be unchanged/too old
-            await q.message.reply_text(await _issue_and_text(user), parse_mode="Markdown")
+            await q.edit_message_text(msg, parse_mode="HTML")
+        except Exception:  # noqa: BLE001 - message unchanged/too old
+            await q.message.reply_text(msg, parse_mode="HTML")
     else:
         await q.answer(
             "❌ You're not in the group yet. Join, then tap ✅ Check my entry again.",
@@ -159,7 +161,7 @@ async def cmd_mytoken(update: Update, context):
     if not rec:
         await update.message.reply_text("You don't have an active token. Send /token.")
         return
-    await update.message.reply_text(_token_msg(rec["token"], rec), parse_mode="Markdown")
+    await update.message.reply_text(_token_msg(rec["token"], rec), parse_mode="HTML")
 
 
 async def cmd_renew(update: Update, context):
@@ -173,7 +175,7 @@ async def cmd_renew(update: Update, context):
     token, rec = tokens.renew(
         user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS)
     await update.message.reply_text("♻️ New token issued.\n\n" + _token_msg(token, rec),
-                                    parse_mode="Markdown")
+                                    parse_mode="HTML")
 
 
 # --------------------------------------------------------------------------- #
@@ -218,7 +220,7 @@ async def cmd_grant(update: Update, context):
         return
     token, rec = tokens.renew(tid, "granted", days)
     await update.message.reply_text(
-        f"Granted to {tid} for {days} day(s):\n`{token}`", parse_mode="Markdown")
+        f"Granted to {tid} for {days} day(s):\n<code>{token}</code>", parse_mode="HTML")
 
 
 async def cmd_revoke(update: Update, context):
@@ -263,7 +265,10 @@ def main():
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("TELEGRAM_BOT_TOKEN is missing in server/.env")
 
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = (Application.builder()
+           .token(config.TELEGRAM_BOT_TOKEN)
+           .concurrent_updates(True)     # handle many users at once
+           .build())
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("token", cmd_token))
