@@ -1,0 +1,3 @@
+# JSON files written by the poller live here, one per ticker/package/period:
+#   SPX/classic_zero.json  SPX/state_full.json  SPX/orderflow.json  ...
+# This folder is kept in git but its contents are ignored (.gitignore).

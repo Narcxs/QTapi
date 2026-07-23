@@ -1,0 +1,85 @@
+# -*- coding: utf-8 -*-
+"""
+Background poller.
+
+Its ONLY job: fetch the GEXBot API for the configured tickers and SAVE every
+result to a JSON file, all at once, every POLL_INTERVAL seconds.
+
+Per ticker it fetches:
+  classic_<period>   for each period in POLL_PERIODS
+  state_<period>     for each period in POLL_PERIODS
+  orderflow
+=> 4 tickers x (2 x 3 periods + 1) = 28 files by default, refreshed every 2 s.
+"""
+import asyncio
+import logging
+import time
+
+from . import config
+from . import gexbot_client as gx
+
+log = logging.getLogger("poller")
+
+# Store with a TTL comfortably above the poll interval so a single missed cycle
+# never turns a served value stale.
+_CLASSIC_TTL = max(config.GEX_CACHE_TTL, int(config.POLL_INTERVAL * 4) + 1)
+_STATE_TTL = _CLASSIC_TTL
+_OF_TTL = max(config.ORDERFLOW_CACHE_TTL, int(config.POLL_INTERVAL * 4) + 1)
+
+_task = None
+
+
+def _jobs():
+    jobs = []
+    for t in config.POLLED_TICKERS:
+        for p in config.POLL_PERIODS:
+            jobs.append(gx.refresh("classic", t, p, _CLASSIC_TTL))
+            jobs.append(gx.refresh("state", t, p, _STATE_TTL))
+        jobs.append(gx.refresh("orderflow", t, "-", _OF_TTL))  # no period
+    return jobs
+
+
+async def _loop():
+    log.info("Poller started: tickers=%s periods=%s every %.1fs -> %d files",
+             config.POLLED_TICKERS, config.POLL_PERIODS, config.POLL_INTERVAL,
+             len(config.POLLED_TICKERS) * (2 * len(config.POLL_PERIODS) + 1))
+    while True:
+        start = time.monotonic()
+        try:
+            results = await asyncio.gather(*_jobs(), return_exceptions=True)
+            ok = sum(1 for r in results if r is True)
+            if ok < len(results):
+                log.warning("poll cycle: %d/%d ok", ok, len(results))
+        except Exception as e:  # noqa: BLE001
+            log.warning("poll cycle error: %s", e)
+        elapsed = time.monotonic() - start
+        await asyncio.sleep(max(0.05, config.POLL_INTERVAL - elapsed))
+
+
+async def _supervised():
+    """Never let the poller die silently: restart it if it ever throws."""
+    while True:
+        try:
+            await _loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.exception("poller crashed, restarting in 2s: %s", e)
+            await asyncio.sleep(2)
+
+
+def start():
+    global _task
+    if config.POLL_ENABLED and config.POLLED_TICKERS and _task is None:
+        _task = asyncio.create_task(_supervised())
+
+
+async def stop():
+    global _task
+    if _task is not None:
+        _task.cancel()
+        try:
+            await _task
+        except asyncio.CancelledError:
+            pass
+        _task = None

@@ -1,0 +1,89 @@
+# -*- coding: utf-8 -*-
+"""
+Central configuration. All secrets come from server/.env (never hard-coded).
+Copy server/.env.example to server/.env and fill in your real values.
+
+  >>> Put your GEXBot API key in server/.env  ->  GEXBOT_API_KEY=...
+"""
+import os
+from dotenv import load_dotenv
+
+# .../server  (one level above this app/ package)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Load .env.example as defaults first, then let a real .env override it. This
+# way the server works whether you filled in .env OR .env.example.
+load_dotenv(os.path.join(BASE_DIR, ".env.example"))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+
+# ---------------------------------------------------------------------------
+# GEXBot API  (Bearer auth; stays on the server only)
+# ---------------------------------------------------------------------------
+# .strip() removes stray spaces / newlines that would make an illegal header.
+GEXBOT_API_KEY = os.getenv("GEXBOT_API_KEY", "").strip()
+GEXBOT_BASE_URL = os.getenv("GEXBOT_BASE_URL", "https://api.gexbot.com")
+GEXBOT_ALT_BASE_URL = os.getenv("GEXBOT_ALT_BASE_URL", "https://api.gex.bot")
+USER_AGENT = os.getenv("USER_AGENT", "GexBotNinjaTrader/1.0")
+DEFAULT_PERIOD = os.getenv("DEFAULT_PERIOD", "zero")
+
+# ---------------------------------------------------------------------------
+# Background poller
+# ---------------------------------------------------------------------------
+POLL_ENABLED = os.getenv("POLL_ENABLED", "1") == "1"
+POLLED_TICKERS = [t.strip().upper()
+                  for t in os.getenv("POLLED_TICKERS", "SPX,SPY,NDX,QQQ").split(",")
+                  if t.strip()]
+POLL_PERIODS = [p.strip()
+                for p in os.getenv("POLL_PERIODS", "zero,full,one").split(",")
+                if p.strip()]
+POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
+
+# ---------------------------------------------------------------------------
+# Futures conversion
+# ---------------------------------------------------------------------------
+# When on, the poller ALSO pre-computes a futures-scaled copy of every mapped
+# ticker (SPX->ES, etc.) so /api/...?future=1 is instant (zero per-request cost).
+AUTO_CONVERT = os.getenv("AUTO_CONVERT", "1") == "1"
+# Official source-ticker -> futures product mapping (from GEXBot docs).
+FUTURES_MAP = {
+    "SPX": "ES", "SPY": "ES",
+    "NDX": "NQ", "QQQ": "NQ",
+    "RUT": "RTY", "IWM": "RTY",
+    "DIA": "YM",
+    "GLD": "GC",
+    "USO": "CL",
+}
+
+# ---------------------------------------------------------------------------
+# JSON file storage  (each fetch is written here separately)
+# ---------------------------------------------------------------------------
+DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
+
+# ---------------------------------------------------------------------------
+# Public data API (/api/...)  -  optional shared token
+# ---------------------------------------------------------------------------
+# If empty, the /api endpoints are open. If set, callers must pass ?token=...
+DATA_API_TOKEN = os.getenv("DATA_API_TOKEN", "").strip()
+
+# ---------------------------------------------------------------------------
+# Hostinger MySQL (subscriptions)
+# ---------------------------------------------------------------------------
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "")
+
+# ---------------------------------------------------------------------------
+# Caching / rate limiting (seconds)
+# ---------------------------------------------------------------------------
+GEX_CACHE_TTL = int(os.getenv("GEX_CACHE_TTL", "15"))
+ORDERFLOW_CACHE_TTL = int(os.getenv("ORDERFLOW_CACHE_TTL", "3"))
+CONV_CACHE_TTL = int(os.getenv("CONV_CACHE_TTL", "600"))
+SUB_CACHE_TTL = int(os.getenv("SUB_CACHE_TTL", "300"))
+
+# ---------------------------------------------------------------------------
+# HTTP server
+# ---------------------------------------------------------------------------
+SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("SERVER_PORT", "8787"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

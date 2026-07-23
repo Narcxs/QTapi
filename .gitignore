@@ -1,0 +1,6 @@
+# NOTE: .env is intentionally NOT ignored (committed ready-to-run on purpose).
+venv/
+__pycache__/
+*.pyc
+data/*/
+data/*.json
