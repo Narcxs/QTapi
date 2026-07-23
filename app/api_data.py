@@ -29,7 +29,8 @@ from . import config, store
 
 router = APIRouter(prefix="/api", tags=["data"])
 
-_PACKAGES = ("classic", "state", "orderflow")
+_GREEKS = ("delta", "gamma", "vanna", "charm")
+_PACKAGES = ("classic", "state", "orderflow") + _GREEKS
 # let browsers / a reverse proxy / CDN absorb bursts (data changes every ~2s)
 _CACHE_HEADERS = {"Cache-Control": f"public, max-age={max(1, int(config.POLL_INTERVAL))}"}
 
@@ -87,10 +88,17 @@ async def index(request: Request, token: str = Query("")):
                 _add(f"{base}/api/{pkg}/{t.lower()}/{p}", t)
     for t in config.POLLED_TICKERS:
         _add(f"{base}/api/orderflow/{t.lower()}", t)
+    if config.POLL_GREEKS:
+        for g in config.GREEKS:
+            for t in config.POLLED_TICKERS:
+                for p in config.GREEK_PERIODS:
+                    _add(f"{base}/api/{g}/{t.lower()}/{p}", t)
 
     return {
         "model": "/api/{package}/{instrument}/{period}",
         "packages": list(_PACKAGES),
+        "greeks": list(config.GREEKS) if config.POLL_GREEKS else [],
+        "greek_periods": config.GREEK_PERIODS,
         "instruments": config.POLLED_TICKERS,
         "periods": config.POLL_PERIODS,
         "futures_map": config.FUTURES_MAP,

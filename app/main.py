@@ -130,7 +130,8 @@ async def data_file(ticker: str = Query(...),
     sub = await verify_cached(key)
     if not sub.get("ok"):
         return JSONResponse({"status": "DENIED", "reason": sub.get("reason")}, 403)
-    if package not in ("classic", "state", "orderflow"):
+    if package not in ("classic", "state", "orderflow",
+                       "delta", "gamma", "vanna", "charm"):
         return JSONResponse({"error": "unknown package"}, 400)
     variant = "fut" if future else ""
     data = store.MEM.get_bytes(package, ticker, period, raw=False, variant=variant)

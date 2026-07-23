@@ -37,6 +37,13 @@ POLL_PERIODS = [p.strip()
                 if p.strip()]
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
 
+# Greek profiles (delta/gamma/vanna/charm). Only 'zero' and 'one' exist upstream.
+POLL_GREEKS = os.getenv("POLL_GREEKS", "1") == "1"
+GREEKS = [g.strip() for g in os.getenv("GREEKS", "delta,gamma,vanna,charm").split(",")
+          if g.strip()]
+GREEK_PERIODS = [p.strip() for p in os.getenv("GREEK_PERIODS", "zero,one").split(",")
+                 if p.strip()]
+
 # ---------------------------------------------------------------------------
 # Futures conversion
 # ---------------------------------------------------------------------------

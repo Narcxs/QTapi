@@ -36,13 +36,21 @@ def _jobs():
             jobs.append(gx.refresh("classic", t, p, _CLASSIC_TTL))
             jobs.append(gx.refresh("state", t, p, _STATE_TTL))
         jobs.append(gx.refresh("orderflow", t, "-", _OF_TTL))  # no period
+        if config.POLL_GREEKS:
+            for g in config.GREEKS:
+                for p in config.GREEK_PERIODS:
+                    jobs.append(gx.refresh(g, t, p, _STATE_TTL))
     return jobs
 
 
 async def _loop():
-    log.info("Poller started: tickers=%s periods=%s every %.1fs -> %d files",
-             config.POLLED_TICKERS, config.POLL_PERIODS, config.POLL_INTERVAL,
-             len(config.POLLED_TICKERS) * (2 * len(config.POLL_PERIODS) + 1))
+    greeks_per_ticker = (len(config.GREEKS) * len(config.GREEK_PERIODS)
+                         if config.POLL_GREEKS else 0)
+    per_ticker = 2 * len(config.POLL_PERIODS) + 1 + greeks_per_ticker
+    log.info("Poller started: tickers=%s periods=%s greeks=%s every %.1fs -> %d files",
+             config.POLLED_TICKERS, config.POLL_PERIODS,
+             config.GREEKS if config.POLL_GREEKS else [],
+             config.POLL_INTERVAL, len(config.POLLED_TICKERS) * per_ticker)
     while True:
         start = time.monotonic()
         try:

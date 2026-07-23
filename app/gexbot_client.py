@@ -125,6 +125,9 @@ def convert(v: Optional[float], conv: Optional[dict]) -> Optional[float]:
     return v * conv["multiplier"] + conv["additive"]
 
 
+# available Greek profiles (upstream: /{ticker}/state/{greek}_{period})
+_GREEKS = {"delta", "gamma", "vanna", "charm"}
+
 # price fields to convert per package (gex/flow values are NOT prices)
 _PRICE_FIELDS = {
     "classic": ["spot", "zero_gamma", "major_pos_vol", "major_pos_oi",
@@ -134,6 +137,9 @@ _PRICE_FIELDS = {
     "orderflow": ["spot", "z_mlgamma", "z_msgamma", "o_mlgamma", "o_msgamma",
                   "zero_mcall", "zero_mput", "one_mcall", "one_mput"],
 }
+# Greek profiles share these price fields
+_GREEK_PRICE_FIELDS = ["spot", "major_positive", "major_negative",
+                       "major_long_gamma", "major_short_gamma"]
 
 
 def convert_payload(raw: dict, kind: str, conv: dict) -> dict:
@@ -142,13 +148,18 @@ def convert_payload(raw: dict, kind: str, conv: dict) -> dict:
     if not isinstance(raw, dict) or conv is None:
         return raw
     out = dict(raw)
-    for f in _PRICE_FIELDS.get(kind, []):
+
+    fields = _GREEK_PRICE_FIELDS if kind in _GREEKS else _PRICE_FIELDS.get(kind, [])
+    for f in fields:
         v = _num(out.get(f))
         if v:                                     # skip None and 0 (=> n/a)
             out[f] = convert(v, conv)
-    if kind in ("classic", "state") and isinstance(out.get("strikes"), list):
+
+    # per-strike prices: classic/state use "strikes", greeks use "mini_contracts"
+    list_key = "mini_contracts" if kind in _GREEKS else "strikes"
+    if isinstance(out.get(list_key), list):
         new = []
-        for s in out["strikes"]:
+        for s in out[list_key]:
             if isinstance(s, (list, tuple)) and s:
                 s2 = list(s)
                 c = convert(_num(s2[0]), conv)
@@ -157,7 +168,7 @@ def convert_payload(raw: dict, kind: str, conv: dict) -> dict:
                 new.append(s2)
             else:
                 new.append(s)
-        out["strikes"] = new
+        out[list_key] = new
     return out
 
 
@@ -171,6 +182,9 @@ async def _do_fetch(kind: str, ticker: str, period: str) -> Any:
         return await _get(config.GEXBOT_BASE_URL, f"/{ticker}/state/{period}")
     if kind == "orderflow":
         return await _get(config.GEXBOT_BASE_URL, f"/{ticker}/orderflow/orderflow")
+    if kind in _GREEKS:
+        # e.g. /SPX/state/delta_zero
+        return await _get(config.GEXBOT_BASE_URL, f"/{ticker}/state/{kind}_{period}")
     raise ValueError(f"unknown kind {kind}")
 
 
