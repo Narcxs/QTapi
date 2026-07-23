@@ -117,3 +117,6 @@ TOKEN_VALID_DAYS = int(os.getenv("TOKEN_VALID_DAYS", "7"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_ADMIN_ID = int(os.getenv("TELEGRAM_ADMIN_ID", "0") or 0)
 TELEGRAM_GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0") or 0)
+# Public invite link shown on the "Join" button. If empty, the bot tries to
+# fetch/create one automatically (needs the bot to be group admin).
+TELEGRAM_GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK", "").strip()

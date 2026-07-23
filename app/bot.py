@@ -20,11 +20,14 @@ the membership check never raises. Run with:  python -m app.bot
 """
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+                          ContextTypes)
 
 from . import config, tokens
+
+_group_link_cache = {"link": None}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +52,40 @@ async def _is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     except Exception as e:  # noqa: BLE001
         log.warning("membership check failed for %s: %s", user_id, e)
         return False
+
+
+async def _group_link(context: ContextTypes.DEFAULT_TYPE):
+    """Return an invite link for the group, or None. Cached after first success."""
+    if config.TELEGRAM_GROUP_LINK:
+        return config.TELEGRAM_GROUP_LINK
+    if _group_link_cache["link"]:
+        return _group_link_cache["link"]
+    if not config.TELEGRAM_GROUP_ID:
+        return None
+    try:
+        chat = await context.bot.get_chat(config.TELEGRAM_GROUP_ID)
+        link = chat.invite_link or await context.bot.export_chat_invite_link(
+            config.TELEGRAM_GROUP_ID)
+        _group_link_cache["link"] = link
+        return link
+    except Exception as e:  # noqa: BLE001
+        log.warning("cannot get group invite link: %s", e)
+        return None
+
+
+async def _join_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    rows = []
+    link = await _group_link(context)
+    if link:
+        rows.append([InlineKeyboardButton("➡️ Join the group", url=link)])
+    rows.append([InlineKeyboardButton("✅ Check my entry", callback_data="check_entry")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _issue_and_text(user) -> str:
+    token, rec = tokens.create_or_get(
+        user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS)
+    return _token_msg(token, rec)
 
 
 def _token_msg(token: str, rec: dict) -> str:
@@ -88,14 +125,33 @@ async def cmd_token(update: Update, context):
     if update.effective_chat.type != ChatType.PRIVATE:
         await update.message.reply_text("🔒 Send me /token in a PRIVATE chat so your token stays secret.")
         return
-    if not await _is_member(context, user.id):
-        await update.message.reply_text(
-            "❌ You must be a member of our group to get a token.\n"
-            "Join the group, then send /token again.")
+    if await _is_member(context, user.id):
+        await update.message.reply_text(await _issue_and_text(user), parse_mode="Markdown")
         return
-    token, rec = tokens.create_or_get(
-        user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS)
-    await update.message.reply_text(_token_msg(token, rec), parse_mode="Markdown")
+    # not a member -> offer to join, then verify with a button
+    await update.message.reply_text(
+        "🔒 To get your free API token you must join our group first.\n\n"
+        "1️⃣ Tap *Join the group*\n"
+        "2️⃣ Then tap *✅ Check my entry*",
+        parse_mode="Markdown",
+        reply_markup=await _join_keyboard(context),
+    )
+
+
+async def cb_check_entry(update: Update, context):
+    """Handles the '✅ Check my entry' button."""
+    q = update.callback_query
+    user = q.from_user
+    if await _is_member(context, user.id):
+        await q.answer("✅ Verified!")
+        try:
+            await q.edit_message_text(await _issue_and_text(user), parse_mode="Markdown")
+        except Exception:  # noqa: BLE001 - message may be unchanged/too old
+            await q.message.reply_text(await _issue_and_text(user), parse_mode="Markdown")
+    else:
+        await q.answer(
+            "❌ You're not in the group yet. Join, then tap ✅ Check my entry again.",
+            show_alert=True)
 
 
 async def cmd_mytoken(update: Update, context):
@@ -218,6 +274,7 @@ def main():
     app.add_handler(CommandHandler("grant", cmd_grant))
     app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("revokeuser", cmd_revokeuser))
+    app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_error_handler(on_error)
 
     log.info("QTapi bot starting (admin=%s, group=%s)...",
