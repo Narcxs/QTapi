@@ -119,6 +119,19 @@ def get_user(telegram_id: int):
     return best
 
 
+def get_user_any(telegram_id: int):
+    """Return the user's most recent token record (ANY status: active, expired
+    or revoked, with 'token' key) or None if they never had one."""
+    best = None
+    for t, rec in _load_cached().get("tokens", {}).items():
+        if rec.get("telegram_id") == telegram_id:
+            r = dict(rec)
+            r["token"] = t
+            if best is None or r.get("created_at", 0) > best.get("created_at", 0):
+                best = r
+    return best
+
+
 def create_or_get(telegram_id: int, username: str, days: int):
     """Return the user's existing active token, or create a new one."""
     with _lock:
