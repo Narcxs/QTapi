@@ -251,6 +251,14 @@ async def get_orderflow(ticker: str):
     return await _cached("orderflow", ticker, "-", config.ORDERFLOW_CACHE_TTL)
 
 
+async def get_greek(kind: str, ticker: str, period: str):
+    """Greek profile (delta/gamma/vanna/charm). Only 'zero' and 'one' exist
+    upstream - anything else falls back to 'zero'."""
+    if period not in ("zero", "one"):
+        period = "zero"
+    return await _cached(kind, ticker, period, config.GEX_CACHE_TTL)
+
+
 async def get_tickers():
     try:
         return await _get(config.GEXBOT_BASE_URL, "/tickers"), False

@@ -19,11 +19,12 @@ Endpoints
 """
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import api_data, config, db, market_hours, poller, storage, store
+from . import api_data, config, db, market_hours, poller, storage, store, tokens
 from . import gexbot_client as gx
 from .cache import TTLCache
 
@@ -129,12 +130,15 @@ async def data_file(ticker: str = Query(...),
                     package: str = Query(...),
                     key: str = Query(""),
                     period: str = Query("zero"),
-                    future: bool = Query(False)):
+                    future: bool = Query(False),
+                    token: str = Query("")):
     """Return the exact saved JSON file (envelope + raw GEXBot data).
     future=1 returns the futures-converted variant for mapped instruments."""
-    sub = await verify_cached(key)
-    if not sub.get("ok"):
-        return JSONResponse({"status": "DENIED", "reason": sub.get("reason")}, 403)
+    ok, _ = await _feed_auth(key, token)
+    if not ok:
+        return JSONResponse({"status": "DENIED",
+                             "reason": "UNAUTHORIZED - get your free token "
+                                       "from our Telegram bot"}, 403)
     if package not in ("classic", "state", "orderflow",
                        "delta", "gamma", "vanna", "charm"):
         return JSONResponse({"error": "unknown package"}, 400)
@@ -146,29 +150,52 @@ async def data_file(ticker: str = Query(...),
 
 
 # --------------------------------------------------------------------------- #
-# overlay indicator feed (classic + state profiles + key levels)
+# indicator feeds auth: per-user token (REQUIRE_TOKEN=1) or legacy license key
+# --------------------------------------------------------------------------- #
+async def _feed_auth(key: str, token: str):
+    """Return (ok, expiry_text). Denial is expressed as ok=False."""
+    if config.REQUIRE_TOKEN:
+        if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
+            return True, ""
+        v = tokens.validate(token)
+        if not v.get("ok"):
+            return False, ""
+        exp = v.get("expires_at")
+        if exp:
+            return True, datetime.fromtimestamp(exp, tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M UTC")
+        return True, ""
+    sub = await verify_cached(key)
+    return (bool(sub.get("ok")), sub.get("expires_at") or "")
+
+
+# --------------------------------------------------------------------------- #
+# overlay indicator feed (classic + state + gamma profiles + key levels)
 # --------------------------------------------------------------------------- #
 @app.get("/overlay", response_class=PlainTextResponse)
 async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
-                  period: str = Query(None), future: str = Query("")):
-    sub = await verify_cached(key)
-    if not sub.get("ok"):
-        return f"STATUS=DENIED|{sub.get('reason')}"
+                  period: str = Query(None), future: str = Query(""),
+                  token: str = Query("")):
+    ok, exp_txt = await _feed_auth(key, token)
+    if not ok:
+        return ("STATUS=DENIED|UNAUTHORIZED - get your free token "
+                "from our Telegram bot")
 
     period = period or config.DEFAULT_PERIOD
     conv = await gx.get_conversion(ticker, future) if future else None
     classic, c_stale = await gx.get_classic(ticker, period)
     state, s_stale = await gx.get_state(ticker, period)
     of, o_stale = await gx.get_orderflow(ticker)
+    gamma, g_stale = await gx.get_greek("gamma", ticker, period)
 
     def cv(v):
         return gx.convert(_num(v), conv)
 
     spot = cv((classic or {}).get("spot")) if classic else cv((of or {}).get("spot"))
     lines = [
-        f"STATUS=OK|{sub.get('expires_at') or ''}",
+        f"STATUS=OK|{exp_txt}",
         f"TS={(classic or of or {}).get('timestamp') or ''}",
-        f"STALE={'1' if (c_stale or s_stale) else '0'}",
+        f"STALE={'1' if (c_stale or s_stale or g_stale) else '0'}",
         f"SPOT={_fmt(spot)}",
         f"NETVOL={_fmt(_num((classic or {}).get('sum_gex_vol')))}",
         f"NETOI={_fmt(_num((classic or {}).get('sum_gex_oi')))}",
@@ -217,6 +244,20 @@ async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                 if st is not None and im:
                     lines.append(f"SPRO|{_fmt(st)}|{_fmt(im)}")
 
+    # gamma Greek profile: per-strike gamma + its major levels
+    # mini_contracts row = [strike, call_iv, put_iv, gamma_value, history, ...]
+    if gamma:
+        mgp = cv(gamma.get("major_positive")); mgn = cv(gamma.get("major_negative"))
+        if mgp:
+            lines.append(f"GLVL|Major + γ|{_fmt(mgp)}|1E90FF|dash|1")
+        if mgn:
+            lines.append(f"GLVL|Major - γ|{_fmt(mgn)}|FF7F00|dash|1")
+        for s in gamma.get("mini_contracts") or []:
+            if isinstance(s, (list, tuple)) and len(s) >= 4:
+                st = cv(s[0]); v = _num(s[3])
+                if st is not None and v:
+                    lines.append(f"GPRO|{_fmt(st)}|{_fmt(v)}")
+
     return "\n".join(lines)
 
 
@@ -236,10 +277,11 @@ _OF_METRICS = [
 
 @app.get("/orderflow", response_class=PlainTextResponse)
 async def orderflow(ticker: str = Query("SPX"), key: str = Query(""),
-                    future: str = Query("")):
-    sub = await verify_cached(key)
-    if not sub.get("ok"):
-        return f"STATUS=DENIED|{sub.get('reason')}"
+                    future: str = Query(""), token: str = Query("")):
+    ok, exp_txt = await _feed_auth(key, token)
+    if not ok:
+        return ("STATUS=DENIED|UNAUTHORIZED - get your free token "
+                "from our Telegram bot")
 
     conv = await gx.get_conversion(ticker, future) if future else None
     of, stale = await gx.get_orderflow(ticker)
@@ -249,7 +291,7 @@ async def orderflow(ticker: str = Query("SPX"), key: str = Query(""),
 
     of = of or {}
     lines = [
-        f"STATUS=OK|{sub.get('expires_at') or ''}",
+        f"STATUS=OK|{exp_txt}",
         f"TS={of.get('timestamp') or ''}",
         f"STALE={'1' if stale else '0'}",
         f"SPOT={_fmt(cv(of.get('spot')))}",
