@@ -16,6 +16,7 @@ import logging
 import time
 
 from . import config
+from . import market_hours as mh
 from . import gexbot_client as gx
 
 log = logging.getLogger("poller")
@@ -51,7 +52,25 @@ async def _loop():
              config.POLLED_TICKERS, config.POLL_PERIODS,
              config.GREEKS if config.POLL_GREEKS else [],
              config.POLL_INTERVAL, len(config.POLLED_TICKERS) * per_ticker)
+    if config.MARKET_HOURS_ONLY:
+        log.info("Market hours only: fetching %s-%s ET (starts %s min early), Mon-Fri",
+                 config.MARKET_OPEN_ET, config.MARKET_CLOSE_ET,
+                 config.PRE_OPEN_MINUTES)
+    was_open = None
     while True:
+        # --- market-hours gate: sleep outside the session window ---
+        if not mh.is_open():
+            if was_open is not False:
+                log.info("Market closed - next fetch window opens %s ET",
+                         mh.next_open().strftime("%a %Y-%m-%d %H:%M"))
+            was_open = False
+            # sleep in <=60s chunks so shutdown stays responsive
+            await asyncio.sleep(min(mh.seconds_until_open() + 1, 60))
+            continue
+        if was_open is not True:
+            log.info("Market window OPEN - fetching every %.1fs", config.POLL_INTERVAL)
+        was_open = True
+
         start = time.monotonic()
         try:
             results = await asyncio.gather(*_jobs(), return_exceptions=True)

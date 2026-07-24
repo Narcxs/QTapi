@@ -45,6 +45,17 @@ GREEK_PERIODS = [p.strip() for p in os.getenv("GREEK_PERIODS", "zero,one").split
                  if p.strip()]
 
 # ---------------------------------------------------------------------------
+# US market hours (New York time, DST handled automatically)
+# ---------------------------------------------------------------------------
+# 1 = the poller only fetches GEXBot inside the session window:
+#     [MARKET_OPEN_ET - PRE_OPEN_MINUTES -> MARKET_CLOSE_ET], Monday-Friday.
+# The HTTP API stays up outside the window and serves the last cached data.
+MARKET_HOURS_ONLY = os.getenv("MARKET_HOURS_ONLY", "1") == "1"
+MARKET_OPEN_ET = os.getenv("MARKET_OPEN_ET", "09:30")
+MARKET_CLOSE_ET = os.getenv("MARKET_CLOSE_ET", "16:00")
+PRE_OPEN_MINUTES = int(os.getenv("PRE_OPEN_MINUTES", "2"))
+
+# ---------------------------------------------------------------------------
 # Futures conversion
 # ---------------------------------------------------------------------------
 # When on, the poller ALSO pre-computes a futures-scaled copy of every mapped

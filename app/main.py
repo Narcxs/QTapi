@@ -23,7 +23,7 @@ import logging
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import api_data, config, db, poller, storage, store
+from . import api_data, config, db, market_hours, poller, storage, store
 from . import gexbot_client as gx
 from .cache import TTLCache
 
@@ -94,7 +94,12 @@ def _num(x):
 async def health():
     return {"status": "ok", "poll_enabled": config.POLL_ENABLED,
             "tickers": config.POLLED_TICKERS, "periods": config.POLL_PERIODS,
-            "interval_s": config.POLL_INTERVAL}
+            "interval_s": config.POLL_INTERVAL,
+            "market_hours_only": config.MARKET_HOURS_ONLY,
+            "market_open": market_hours.is_open(),
+            "next_open_et": (market_hours.next_open().isoformat()
+                             if config.MARKET_HOURS_ONLY
+                             and not market_hours.is_open() else None)}
 
 
 @app.get("/status")
