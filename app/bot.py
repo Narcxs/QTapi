@@ -85,25 +85,40 @@ async def _join_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMa
     if link:
         rows.append([InlineKeyboardButton("➡️ Join the group", url=link)])
     rows.append([InlineKeyboardButton("✅ Verify membership", callback_data="check_entry")])
+    if config.TELEGRAM_CHANNEL_LINK:
+        rows.append([InlineKeyboardButton("📢 Main Channel",
+                                          url=config.TELEGRAM_CHANNEL_LINK)])
     return InlineKeyboardMarkup(rows)
 
 
-async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Main menu: token / renew / documentation."""
-    rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
-             InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")]]
+async def _links_row(context: ContextTypes.DEFAULT_TYPE):
+    """One row with the public links (Documentation in the group + channel)."""
+    row = []
     link = await _group_link(context)
     if link:
-        rows.append([InlineKeyboardButton("📖 Documentation (pinned in group)", url=link)])
+        row.append(InlineKeyboardButton("📖 Documentation", url=link))
+    if config.TELEGRAM_CHANNEL_LINK:
+        row.append(InlineKeyboardButton("📢 Main Channel",
+                                        url=config.TELEGRAM_CHANNEL_LINK))
+    return row
+
+
+async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    """Main menu: token / renew / documentation / channel."""
+    rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
+             InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")]]
+    links = await _links_row(context)
+    if links:
+        rows.append(links)
     return InlineKeyboardMarkup(rows)
 
 
 async def _token_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Under an active token card: renew (enabled at expiry) + docs."""
+    """Under an active token card: renew (enabled at expiry) + links."""
     rows = [[InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")]]
-    link = await _group_link(context)
-    if link:
-        rows.append([InlineKeyboardButton("📖 Documentation (pinned in group)", url=link)])
+    links = await _links_row(context)
+    if links:
+        rows.append(links)
     return InlineKeyboardMarkup(rows)
 
 

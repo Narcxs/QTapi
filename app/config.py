@@ -131,3 +131,5 @@ TELEGRAM_GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0") or 0)
 # Public invite link shown on the "Join" button. If empty, the bot tries to
 # fetch/create one automatically (needs the bot to be group admin).
 TELEGRAM_GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK", "").strip()
+# Public channel shown as a "Main Channel" button in the bot menus.
+TELEGRAM_CHANNEL_LINK = os.getenv("TELEGRAM_CHANNEL_LINK", "").strip()
