@@ -160,7 +160,7 @@ def _token_msg(token: str, rec: dict) -> str:
         f"<code>{token}</code>\n\n"
         "<b>Quick start</b>\n"
         "Append <code>?token=YOUR_TOKEN</code> to any endpoint, e.g.:\n"
-        f"<code>{base}/api/classic/spx/zero?token={token}</code>\n\n"
+        f"<code>{base}/api/spx/classic/zero?token={token}</code>\n\n"
         "📖 The full API documentation is pinned in our Telegram group.\n\n"
         "<i>Keep this token private — it is tied to your account.</i>"
     )
