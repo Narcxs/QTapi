@@ -22,6 +22,7 @@ the membership check never raises. Run with:  python -m app.bot
 """
 import logging
 
+import httpx
 from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
                       Update)
 from telegram.constants import ChatType
@@ -104,9 +105,10 @@ async def _links_row(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Main menu: token / renew / documentation / channel."""
+    """Main menu: token / renew / api health / links."""
     rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
-             InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")]]
+             InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")],
+            [InlineKeyboardButton("🩺 API Health", callback_data="menu_health")]]
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -276,13 +278,57 @@ async def cmd_renew(update: Update, context):
 
 
 # --------------------------------------------------------------------------- #
+# API health (fetched internally - no dependency on the public domain/proxy)
+# --------------------------------------------------------------------------- #
+async def _health_text() -> str:
+    base = f"http://127.0.0.1:{config.SERVER_PORT}"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            h = (await c.get(f"{base}/health")).json()
+            try:
+                st = (await c.get(f"{base}/status")).json()
+            except Exception:  # noqa: BLE001 - freshness is best-effort
+                st = None
+    except Exception as e:  # noqa: BLE001
+        return ("<b>🩺 QTapi — API Health</b>\n\n"
+                f"🔴 <b>API unreachable</b> ({type(e).__name__})\n"
+                "The API process seems down — it needs a restart on the VPS.")
+
+    lines = ["<b>🩺 QTapi — API Health</b>\n",
+             f"API: ✅ {h.get('status', '?')}"]
+    if h.get("poll_enabled"):
+        lines.append(f"Polling: every {h.get('interval_s')}s")
+    else:
+        lines.append("Polling: ⏸️ disabled")
+    lines.append("Tickers: " + ", ".join(h.get("tickers", [])))
+    lines.append("Periods: " + ", ".join(h.get("periods", [])))
+    if h.get("market_hours_only"):
+        if h.get("market_open"):
+            lines.append("Market: 🟢 OPEN (fetching)")
+        else:
+            nxt = (h.get("next_open_et") or "")[:16].replace("T", " ")
+            lines.append(f"Market: 🔴 CLOSED — next fetch {nxt} ET")
+    else:
+        lines.append("Market hours gate: OFF (fetching 24/7)")
+    if st:
+        ages = [f.get("age_s") for t in st.get("files", {}).values()
+                for f in t.values()
+                if isinstance(f, dict) and f.get("age_s") is not None]
+        if ages:
+            lines.append(f"Freshest data: {min(ages)}s ago")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
 # buttons
 # --------------------------------------------------------------------------- #
 async def cb_menu(update: Update, context):
-    """Handles 🔑 My Token / ♻️ Renew menu buttons."""
+    """Handles 🔑 My Token / ♻️ Renew / 🩺 API Health menu buttons."""
     q = update.callback_query
     user = q.from_user
-    if q.data == "menu_renew":
+    if q.data == "menu_health":
+        text, markup = await _health_text(), await _menu_keyboard(context)
+    elif q.data == "menu_renew":
         # renew only works after expiry -> popup instead of touching the card
         if await _is_member(context, user.id):
             rec = tokens.get_user(user.id)
@@ -430,7 +476,7 @@ def main():
     app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("revokeuser", cmd_revokeuser))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health)$"))
     app.add_error_handler(on_error)
 
     log.info("QTapi bot starting (admin=%s, group=%s)...",
