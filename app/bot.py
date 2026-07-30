@@ -21,17 +21,24 @@ Designed to NOT crash: every handler is wrapped by a global error handler, and
 the membership check never raises. Run with:  python -m app.bot
 """
 import logging
+import secrets
 
 import httpx
 from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
                       Update)
 from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
-                          ContextTypes)
+                          ContextTypes, MessageHandler, filters)
 
 from . import config, hwids, tokens
 
 _group_link_cache = {"link": None}
+
+# ConvexValue license requests: users waiting to type their HWID, and pending
+# admin approvals (short id -> request). In-memory is enough: worst case after
+# a bot restart, the user taps the button again / the admin sees "expired".
+_cv_awaiting_hwid = set()          # telegram user ids
+_cv_requests = {}                  # req_id -> {user_id, username, hwid}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,10 +112,11 @@ async def _links_row(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Main menu: token / renew / api health / links."""
+    """Main menu: token / renew / api health / cv license / links."""
     rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
              InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")],
-            [InlineKeyboardButton("🩺 API Health", callback_data="menu_health")]]
+            [InlineKeyboardButton("🩺 API Health", callback_data="menu_health"),
+             InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv")]]
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -324,9 +332,18 @@ async def _health_text() -> str:
 # buttons
 # --------------------------------------------------------------------------- #
 async def cb_menu(update: Update, context):
-    """Handles 🔑 My Token / ♻️ Renew / 🩺 API Health menu buttons."""
+    """Handles the main-menu buttons."""
     q = update.callback_query
     user = q.from_user
+    if q.data == "menu_cv":
+        _cv_awaiting_hwid.add(user.id)
+        await q.answer()
+        await q.message.reply_text(
+            "<b>🖥️ ConvexValue license</b>\n\n"
+            "Send me your <b>Machine ID (HWID)</b> in your next message.\n"
+            "I'll forward it to the admin for approval.",
+            parse_mode="HTML")
+        return
     if q.data == "menu_health":
         text, markup = await _health_text(), await _menu_keyboard(context)
     elif q.data == "menu_renew":
@@ -347,6 +364,85 @@ async def cb_menu(update: Update, context):
         await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
     except Exception:  # noqa: BLE001 - message unchanged/too old
         await q.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def on_text(update: Update, context):
+    """Captures the Machine ID after the user tapped 'Get CV License'."""
+    user = update.effective_user
+    if user.id not in _cv_awaiting_hwid:
+        return
+    _cv_awaiting_hwid.discard(user.id)
+    hwid = (update.message.text or "").strip()
+    if not (3 <= len(hwid) <= 128) or "\n" in hwid:
+        await update.message.reply_text(
+            "⚠️ That doesn't look like a valid Machine ID. "
+            "Tap 🖥️ Get CV License and try again.")
+        return
+    if hwids.is_active(hwid):
+        await update.message.reply_text(
+            "✅ This Machine ID is already licensed — you can log in from the app.")
+        return
+    req_id = secrets.token_hex(3)
+    _cv_requests[req_id] = {
+        "user_id": user.id,
+        "username": user.username or user.full_name,
+        "hwid": hwid,
+    }
+    await update.message.reply_text(
+        "⏳ Request sent! You'll be notified once the admin reviews it.")
+    if not config.TELEGRAM_ADMIN_ID:
+        log.warning("CV request from %s but TELEGRAM_ADMIN_ID is not set", user.id)
+        return
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approve", callback_data=f"cv_ok:{req_id}"),
+        InlineKeyboardButton("❌ Refuse", callback_data=f"cv_no:{req_id}"),
+    ]])
+    await context.bot.send_message(
+        config.TELEGRAM_ADMIN_ID,
+        "<b>🖥️ ConvexValue license request</b>\n\n"
+        f"👤 @{_cv_requests[req_id]['username']} (id {user.id})\n"
+        f"🆔 <code>{hwid}</code>",
+        parse_mode="HTML", reply_markup=kb)
+
+
+async def cb_cv_decide(update: Update, context):
+    """Admin approves/refuses a ConvexValue license request."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("Only the admin can decide.", show_alert=True)
+        return
+    action, req_id = q.data.split(":", 1)
+    req = _cv_requests.pop(req_id, None)
+    if req is None:
+        await q.answer("Request expired or already handled.", show_alert=True)
+        return
+    approved = action == "cv_ok"
+    if approved:
+        hwids.add(req["hwid"], username=req["username"],
+                  telegram_id=req["user_id"])
+    await q.answer("Approved ✅" if approved else "Refused ❌")
+    try:
+        verdict = "✅ APPROVED" if approved else "❌ REFUSED"
+        await q.edit_message_text(
+            (q.message.text_html or "") + f"\n\n<b>{verdict}</b>",
+            parse_mode="HTML")
+    except Exception:  # noqa: BLE001 - message too old/unchanged
+        pass
+    try:
+        if approved:
+            await context.bot.send_message(
+                req["user_id"],
+                "🎉 Your ConvexValue license is now <b>ACTIVE</b>!\n\n"
+                f"Machine ID: <code>{req['hwid']}</code>\n"
+                "You can now log in from the app.",
+                parse_mode="HTML")
+        else:
+            await context.bot.send_message(
+                req["user_id"],
+                "❌ Your ConvexValue license request was refused.\n"
+                "Contact the admin in the group for more info.")
+    except Exception:  # noqa: BLE001 - user blocked the bot, etc.
+        pass
 
 
 async def cb_check_entry(update: Update, context):
@@ -474,7 +570,8 @@ async def cmd_cvlist(update: Update, context):
     lines = ["<b>🖥️ Licensed devices (ConvexValue)</b>\n"]
     for hwid, rec in items:
         flag = "✅" if rec.get("active") else "❌"
-        lines.append(f"{flag} <code>{hwid}</code>")
+        owner = f" — @{rec.get('username')}" if rec.get("username") else ""
+        lines.append(f"{flag} <code>{hwid}</code>{owner}")
     text = "\n".join(lines)
     for i in range(0, len(text), 3500):        # respect Telegram's 4096 limit
         await update.message.reply_text(text[i:i + 3500], parse_mode="HTML")
@@ -524,7 +621,10 @@ def main():
     app.add_handler(CommandHandler("cvremove", cmd_cvremove))
     app.add_handler(CommandHandler("cvlist", cmd_cvlist))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv)$"))
+    app.add_handler(CallbackQueryHandler(cb_cv_decide, pattern="^cv_(ok|no):"))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
     app.add_error_handler(on_error)
 
     log.info("QTapi bot starting (admin=%s, group=%s)...",

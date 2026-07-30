@@ -70,11 +70,19 @@ def is_active(hwid: str) -> bool:
 # --------------------------------------------------------------------------- #
 # write (used by the bot - admin only)
 # --------------------------------------------------------------------------- #
-def add(hwid: str) -> None:
-    """Add a device (or re-activate an existing one)."""
+def add(hwid: str, username: str = None, telegram_id: int = None) -> None:
+    """Add a device (or re-activate an existing one). The owner's Telegram
+    username/id is kept so the admin knows who owns each HWID."""
     with _lock:
         data = _load_raw()
-        data["devices"][hwid] = {"active": True, "added_at": int(time.time())}
+        rec = data["devices"].get(hwid, {})
+        rec["active"] = True
+        rec.setdefault("added_at", int(time.time()))
+        if username is not None:
+            rec["username"] = username
+        if telegram_id is not None:
+            rec["telegram_id"] = telegram_id
+        data["devices"][hwid] = rec
         _save(data)
 
 
