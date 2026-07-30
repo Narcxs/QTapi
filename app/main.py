@@ -21,10 +21,10 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import api_data, config, db, market_hours, poller, storage, store, tokens
+from . import api_data, config, db, hwids, market_hours, poller, storage, store, tokens
 from . import gexbot_client as gx
 from .cache import TTLCache
 
@@ -259,6 +259,26 @@ async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                     lines.append(f"GPRO|{_fmt(st)}|{_fmt(v)}")
 
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# ConvexValue license check (managed from the Telegram bot, admin only)
+# --------------------------------------------------------------------------- #
+@app.post("/cv-auth")
+async def cv_auth(request: Request):
+    """The desktop app POSTs {"hwid": "..."} ; licensed + active HWIDs receive
+    the shared credentials. HWIDs are managed via the Telegram bot."""
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "Invalid JSON"}, 400)
+    hwid = str(data.get("hwid", ""))
+    log.info("[cv-auth] HWID request: %s", hwid)
+    if hwid and hwids.is_active(hwid):
+        return {"status": "success",
+                "email": config.CV_SHARED_EMAIL,
+                "password": config.CV_SHARED_PASSWORD}
+    return {"status": "unauthorized", "email": "", "password": ""}
 
 
 # --------------------------------------------------------------------------- #

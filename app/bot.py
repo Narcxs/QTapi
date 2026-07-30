@@ -29,7 +29,7 @@ from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes)
 
-from . import config, tokens
+from . import config, hwids, tokens
 
 _group_link_cache = {"link": None}
 
@@ -256,7 +256,8 @@ async def cmd_help(update: Update, context):
     txt = _HELP
     if _is_admin(update.effective_user.id):
         txt += ("\n\n<b>Admin</b>\n/list\n/stats\n/grant <id> [days]\n"
-                "/revoke <token>\n/revokeuser <id>")
+                "/revoke <token>\n/revokeuser <id>\n\n"
+                "<b>ConvexValue</b>\n/cvadd <hwid>\n/cvremove <hwid>\n/cvlist")
     await update.message.reply_text(
         txt, parse_mode="HTML", reply_markup=await _menu_keyboard(context))
 
@@ -436,6 +437,50 @@ async def cmd_revokeuser(update: Update, context):
 
 
 # --------------------------------------------------------------------------- #
+# ConvexValue HWID licenses (admin only)
+# --------------------------------------------------------------------------- #
+async def cmd_cvadd(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    hwid = " ".join(context.args).strip()
+    if not hwid:
+        await update.message.reply_text("Usage: /cvadd <hwid>")
+        return
+    hwids.add(hwid)
+    await update.message.reply_text(f"✅ HWID added & activated:\n<code>{hwid}</code>",
+                                    parse_mode="HTML")
+
+
+async def cmd_cvremove(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    hwid = " ".join(context.args).strip()
+    if not hwid:
+        await update.message.reply_text("Usage: /cvremove <hwid>")
+        return
+    ok = hwids.remove(hwid)
+    await update.message.reply_text(
+        f"🗑️ HWID removed:\n<code>{hwid}</code>" if ok
+        else "HWID not found.", parse_mode="HTML")
+
+
+async def cmd_cvlist(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    items = hwids.list_all()
+    if not items:
+        await update.message.reply_text("No licensed devices yet. Add one with /cvadd <hwid>")
+        return
+    lines = ["<b>🖥️ Licensed devices (ConvexValue)</b>\n"]
+    for hwid, rec in items:
+        flag = "✅" if rec.get("active") else "❌"
+        lines.append(f"{flag} <code>{hwid}</code>")
+    text = "\n".join(lines)
+    for i in range(0, len(text), 3500):        # respect Telegram's 4096 limit
+        await update.message.reply_text(text[i:i + 3500], parse_mode="HTML")
+
+
+# --------------------------------------------------------------------------- #
 # never crash
 # --------------------------------------------------------------------------- #
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -475,6 +520,9 @@ def main():
     app.add_handler(CommandHandler("grant", cmd_grant))
     app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("revokeuser", cmd_revokeuser))
+    app.add_handler(CommandHandler("cvadd", cmd_cvadd))
+    app.add_handler(CommandHandler("cvremove", cmd_cvremove))
+    app.add_handler(CommandHandler("cvlist", cmd_cvlist))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health)$"))
     app.add_error_handler(on_error)

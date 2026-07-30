@@ -133,3 +133,9 @@ TELEGRAM_GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0") or 0)
 TELEGRAM_GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK", "").strip()
 # Public channel shown as a "Main Channel" button in the bot menus.
 TELEGRAM_CHANNEL_LINK = os.getenv("TELEGRAM_CHANNEL_LINK", "").strip()
+
+# ---------------------------------------------------------------------------
+# ConvexValue shared account (returned by POST /cv-auth to licensed HWIDs)
+# ---------------------------------------------------------------------------
+CV_SHARED_EMAIL = os.getenv("CV_SHARED_EMAIL", "").strip()
+CV_SHARED_PASSWORD = os.getenv("CV_SHARED_PASSWORD", "").strip()
