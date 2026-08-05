@@ -99,24 +99,33 @@ def _publish(kind: str, ticker: str, period, raw,
 # --------------------------------------------------------------------------- #
 # futures conversion (SPX->ES, NDX->NQ, ...)
 # --------------------------------------------------------------------------- #
+# Conversion model per SOURCE ticker (verified against the official endpoint):
+#   index -> future (SPX, NDX, RUT): "additive"  (pure basis spread, mult=1)
+#   ETF   -> future (SPY, QQQ, IWM): "multiplicative" (ratio ~= x10; "additive"
+#         is badly wrong there, and "affine" is unstable for both)
+_INDEX_TICKERS = {"SPX", "NDX", "RUT", "VIX"}
+
+
 async def get_conversion(ticker: str, future: str) -> Dict[str, Any]:
     key = f"{ticker}:{future}".upper()
     cached, fresh = _conv_cache.get(key)
     if fresh:
         return cached
+    model = "additive" if ticker.upper() in _INDEX_TICKERS else "multiplicative"
     try:
         data = await _get(config.GEXBOT_ALT_BASE_URL, "/v2/futures/conversion",
-                          {"ticker": ticker, "future": future, "model": "additive"})
+                          {"ticker": ticker, "future": future, "model": model})
         conv = {
             "multiplier": _num(data.get("multiplier")) or 1.0,
             "additive": _num(data.get("additive")) or 0.0,
             "contract": data.get("future_contract"),
+            "model": model,
         }
         _conv_cache.set(key, conv, config.CONV_CACHE_TTL)
         return conv
     except Exception as e:  # noqa: BLE001
         log.warning("conversion %s/%s error: %s", ticker, future, e)
-        return _conv_cache.get_stale(key) or {"multiplier": 1.0, "additive": 0.0, "contract": None}
+        return _conv_cache.get_stale(key) or {"multiplier": 1.0, "additive": 0.0, "contract": None, "model": model}
 
 
 def convert(v: Optional[float], conv: Optional[dict]) -> Optional[float]:
@@ -209,6 +218,7 @@ async def refresh(kind: str, ticker: str, period: str, ttl: int) -> bool:
                 "future_contract": conv.get("contract"),
                 "multiplier": conv.get("multiplier"),
                 "additive": conv.get("additive"),
+                "model": conv.get("model"),
             })
         return True
     except Exception as e:  # noqa: BLE001
