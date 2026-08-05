@@ -178,6 +178,17 @@ def convert_payload(raw: dict, kind: str, conv: dict) -> dict:
             else:
                 new.append(s)
         out[list_key] = new
+
+    # max_priors: [strike, change] pairs -> convert the strike too
+    if isinstance(out.get("max_priors"), list):
+        mp = []
+        for p in out["max_priors"]:
+            if isinstance(p, (list, tuple)) and p:
+                c = convert(_num(p[0]), conv)
+                mp.append([c if c is not None else p[0]] + list(p[1:]))
+            else:
+                mp.append(p)
+        out["max_priors"] = mp
     return out
 
 
