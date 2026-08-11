@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import api_data, config, db, hwids, market_hours, poller, storage, store, tokens
+from . import api_data, config, db, history, hwids, market_hours, poller, storage, store, tokens
 from . import gexbot_client as gx
 from .cache import TTLCache
 
@@ -172,6 +172,10 @@ async def _feed_auth(key: str, token: str):
 # --------------------------------------------------------------------------- #
 # overlay indicator feed (classic + state + gamma profiles + key levels)
 # --------------------------------------------------------------------------- #
+# max_priors lookbacks, in upstream order: current, 1, 5, 10, 15, 30 minutes
+_PRIOR_LOOKBACKS = ("0", "1", "5", "10", "15", "30")
+
+
 @app.get("/overlay", response_class=PlainTextResponse)
 async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                   period: str = Query(None), future: str = Query(""),
@@ -257,6 +261,25 @@ async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                 st = cv(s[0]); v = _num(s[3])
                 if st is not None and v:
                     lines.append(f"GPRO|{_fmt(st)}|{_fmt(v)}")
+
+    # prior dots: strikes with the biggest GEX change per lookback (minutes)
+    if classic:
+        for i, p in enumerate(classic.get("max_priors") or []):
+            if isinstance(p, (list, tuple)) and len(p) >= 2:
+                st = cv(p[0]); ch = _num(p[1])
+                if st is not None and ch:
+                    lb = _PRIOR_LOOKBACKS[i] if i < len(_PRIOR_LOOKBACKS) else str(i)
+                    lines.append(f"PRIOR|{_fmt(st)}|{_fmt(ch)}|{lb}")
+
+    # history majors: previous days' key levels (D-1, D-2, ...)
+    for snap in history.previous_days(ticker, period):
+        d = snap.get("date", "")
+        for label, fld in (("Call Wall", "major_pos_vol"),
+                           ("Put Wall", "major_neg_vol"),
+                           ("Zero γ", "zero_gamma")):
+            v = cv(snap.get(fld))
+            if v:
+                lines.append(f"HIST|{label}|{_fmt(v)}|{d}")
 
     return "\n".join(lines)
 

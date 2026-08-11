@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
-from . import config, storage, store
+from . import config, history, storage, store
 from .cache import TTLCache
 
 log = logging.getLogger("gexbot")
@@ -219,6 +219,13 @@ async def refresh(kind: str, ticker: str, period: str, ttl: int) -> bool:
         raw = await _do_fetch(kind, ticker, period)
         _cache.set(_key(kind, ticker, period), raw, ttl)
         _publish(kind, ticker, period, raw)                 # index scale
+        # daily snapshot of the majors (history majors on the chart)
+        if kind == "classic":
+            try:
+                asyncio.get_running_loop().run_in_executor(
+                    None, history.archive, ticker, period, raw)
+            except RuntimeError:
+                history.archive(ticker, period, raw)
         # futures-converted variant (pre-computed so /api?future=1 is instant)
         fut = config.FUTURES_MAP.get(ticker.upper()) if config.AUTO_CONVERT else None
         if fut:
