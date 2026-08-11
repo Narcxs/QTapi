@@ -175,22 +175,25 @@ async def _feed_auth(key: str, token: str):
 # max_priors lookbacks, in upstream order: current, 1, 5, 10, 15, 30 minutes
 _PRIOR_LOOKBACKS = ("0", "1", "5", "10", "15", "30")
 
+_GREEK_SYMBOLS = {"delta": "Δ", "gamma": "γ", "vanna": "ν", "charm": "χ"}
+
 
 @app.get("/overlay", response_class=PlainTextResponse)
 async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                   period: str = Query(None), future: str = Query(""),
-                  token: str = Query("")):
+                  token: str = Query(""), greek: str = Query("gamma")):
     ok, exp_txt = await _feed_auth(key, token)
     if not ok:
         return ("STATUS=DENIED|UNAUTHORIZED - get your free token "
                 "from our Telegram bot")
 
     period = period or config.DEFAULT_PERIOD
+    greek = greek.lower() if greek.lower() in _GREEK_SYMBOLS else "gamma"
     conv = await gx.get_conversion(ticker, future) if future else None
     classic, c_stale = await gx.get_classic(ticker, period)
     state, s_stale = await gx.get_state(ticker, period)
     of, o_stale = await gx.get_orderflow(ticker)
-    gamma, g_stale = await gx.get_greek("gamma", ticker, period)
+    greek_data, g_stale = await gx.get_greek(greek, ticker, period)
 
     def cv(v):
         return gx.convert(_num(v), conv)
@@ -248,15 +251,16 @@ async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                 if st is not None and im:
                     lines.append(f"SPRO|{_fmt(st)}|{_fmt(im)}")
 
-    # gamma Greek profile: per-strike gamma + its major levels
-    # mini_contracts row = [strike, call_iv, put_iv, gamma_value, history, ...]
-    if gamma:
-        mgp = cv(gamma.get("major_positive")); mgn = cv(gamma.get("major_negative"))
+    # Greek profile (selectable): per-strike values + its major levels
+    # mini_contracts row = [strike, call_iv, put_iv, greek_value, history, ...]
+    sym = _GREEK_SYMBOLS[greek]
+    if greek_data:
+        mgp = cv(greek_data.get("major_positive")); mgn = cv(greek_data.get("major_negative"))
         if mgp:
-            lines.append(f"GLVL|Major + γ|{_fmt(mgp)}|1E90FF|dash|1")
+            lines.append(f"GLVL|Major + {sym}|{_fmt(mgp)}|1E90FF|dash|1")
         if mgn:
-            lines.append(f"GLVL|Major - γ|{_fmt(mgn)}|FF7F00|dash|1")
-        for s in gamma.get("mini_contracts") or []:
+            lines.append(f"GLVL|Major - {sym}|{_fmt(mgn)}|FF7F00|dash|1")
+        for s in greek_data.get("mini_contracts") or []:
             if isinstance(s, (list, tuple)) and len(s) >= 4:
                 st = cv(s[0]); v = _num(s[3])
                 if st is not None and v:
