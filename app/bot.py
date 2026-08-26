@@ -22,6 +22,8 @@ the membership check never raises. Run with:  python -m app.bot
 """
 import logging
 import secrets
+import time
+from datetime import datetime, timezone
 
 import httpx
 from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -30,7 +32,7 @@ from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
-from . import config, hwids, menthorq, mq_tokens, tokens
+from . import config, hwids, menthorq, mq_tokens, tokens, warns
 
 _group_link_cache = {"link": None}
 
@@ -282,7 +284,8 @@ async def cmd_help(update: Update, context):
         txt += ("\n\n<b>Admin</b>\n/list\n/stats\n/grant <id> [days]\n"
                 "/revoke <token>\n/revokeuser <id>\n\n"
                 "<b>ConvexValue</b>\n/cvadd <hwid>\n/cvremove <hwid>\n/cvlist\n\n"
-                "<b>MenthorQ</b>\n/mqlist\n/mqrevoke <token>")
+                "<b>MenthorQ</b>\n/mqlist\n/mqrevoke <token>\n\n"
+                "<b>Moderation</b>\n/warn [reason] (reply)\n/warns [id] (reply)\n/unwarn (reply)")
     await update.message.reply_text(
         txt, parse_mode="HTML",
         reply_markup=await _menu_keyboard(context, _is_admin(update.effective_user.id)))
@@ -757,6 +760,120 @@ async def cmd_mqrevoke(update: Update, context):
 
 
 # --------------------------------------------------------------------------- #
+# warning system (admin only - used in the GROUP by replying to a message)
+# --------------------------------------------------------------------------- #
+def _target_from_reply(update: Update):
+    msg = update.message
+    if msg and msg.reply_to_message and msg.reply_to_message.from_user:
+        return msg.reply_to_message.from_user
+    return None
+
+
+def _display_name(user) -> str:
+    return f"@{user.username}" if getattr(user, "username", None) else \
+        getattr(user, "full_name", str(getattr(user, "id", "?")))
+
+
+async def cmd_warn(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    target = _target_from_reply(update)
+    if target is None:
+        await update.message.reply_text(
+            "Usage: reply to a user's message with /warn [reason]")
+        return
+    if _is_admin(target.id) or getattr(target, "is_bot", False):
+        await update.message.reply_text("You can't warn an admin or a bot.")
+        return
+
+    reason = " ".join(context.args).strip()
+    n = warns.add(target.id, update.effective_user.id, reason)
+    name = _display_name(target)
+
+    if n >= config.WARN_THRESHOLD:
+        # timed ban: Telegram lifts it automatically after WARN_BAN_DAYS
+        until = int(time.time()) + config.WARN_BAN_DAYS * 86400
+        try:
+            await context.bot.ban_chat_member(
+                config.TELEGRAM_GROUP_ID, target.id, until_date=until)
+        except Exception as e:  # noqa: BLE001
+            log.warning("ban failed for %s: %s", target.id, e)
+            await update.message.reply_text(
+                f"⚠️ {name} reached {n}/{config.WARN_THRESHOLD} warnings but I "
+                "couldn't ban them — am I group admin with ban rights?")
+            return
+        warns.reset(target.id, banned=True)
+        await update.message.reply_text(
+            f"🔨 <b>{name}</b> has been <b>banned for "
+            f"{config.WARN_BAN_DAYS} day(s)</b> "
+            f"({config.WARN_THRESHOLD} warnings).", parse_mode="HTML")
+        try:
+            await context.bot.send_message(
+                target.id,
+                f"🔨 You have been banned from the group for "
+                f"{config.WARN_BAN_DAYS} day(s) after "
+                f"{config.WARN_THRESHOLD} warnings."
+                + (f"\nLast reason: {reason}" if reason else ""))
+        except Exception:  # noqa: BLE001 - user never started the bot
+            pass
+        return
+
+    txt = f"⚠️ <b>{name}</b> — warning <b>{n}/{config.WARN_THRESHOLD}</b>"
+    if reason:
+        txt += f"\nReason: {reason}"
+    if n == config.WARN_THRESHOLD - 1:
+        txt += f"\n<i>Next warning = {config.WARN_BAN_DAYS} day(s) ban.</i>"
+    await update.message.reply_text(txt, parse_mode="HTML")
+    try:
+        await context.bot.send_message(
+            target.id,
+            f"⚠️ You received a warning ({n}/{config.WARN_THRESHOLD}) in the group."
+            + (f"\nReason: {reason}" if reason else ""))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def cmd_warns(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    target = _target_from_reply(update)
+    if target is None and context.args:
+        try:
+            tid = int(context.args[0])
+            target = type("U", (), {"id": tid, "username": "", "full_name": str(tid)})()
+        except ValueError:
+            target = None
+    if target is None:
+        await update.message.reply_text(
+            "Usage: reply with /warns, or /warns <telegram_id>")
+        return
+    rec = warns.get(target.id)
+    n = len(rec.get("warns", []))
+    lines = [f"⚠️ <b>{_display_name(target)}</b>: <b>{n}/{config.WARN_THRESHOLD}</b> "
+             f"warnings · {rec.get('bans', 0)} ban(s) total."]
+    for w in rec.get("warns", [])[-5:]:
+        d = datetime.fromtimestamp(w.get("at", 0), tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M")
+        r = f" — {w.get('reason')}" if w.get("reason") else ""
+        lines.append(f"• {d} UTC{r}")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_unwarn(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    target = _target_from_reply(update)
+    if target is None:
+        await update.message.reply_text(
+            "Usage: reply to a user's message with /unwarn")
+        return
+    n = warns.remove_last(target.id)
+    await update.message.reply_text(
+        f"✅ Last warning removed for <b>{_display_name(target)}</b> — "
+        f"now {n}/{config.WARN_THRESHOLD}.", parse_mode="HTML")
+
+
+# --------------------------------------------------------------------------- #
 # never crash
 # --------------------------------------------------------------------------- #
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -801,6 +918,9 @@ def main():
     app.add_handler(CommandHandler("cvlist", cmd_cvlist))
     app.add_handler(CommandHandler("mqlist", cmd_mqlist))
     app.add_handler(CommandHandler("mqrevoke", cmd_mqrevoke))
+    app.add_handler(CommandHandler("warn", cmd_warn))
+    app.add_handler(CommandHandler("warns", cmd_warns))
+    app.add_handler(CommandHandler("unwarn", cmd_unwarn))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv|mq)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))

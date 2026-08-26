@@ -134,6 +134,11 @@ TELEGRAM_GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK", "").strip()
 # Public channel shown as a "Main Channel" button in the bot menus.
 TELEGRAM_CHANNEL_LINK = os.getenv("TELEGRAM_CHANNEL_LINK", "").strip()
 
+# Warning system: /warn (reply to a message, admin only). At WARN_THRESHOLD
+# warnings the user is banned from the group for WARN_BAN_DAYS day(s).
+WARN_THRESHOLD = int(os.getenv("WARN_THRESHOLD", "3"))
+WARN_BAN_DAYS = int(os.getenv("WARN_BAN_DAYS", "1"))
+
 # ---------------------------------------------------------------------------
 # ConvexValue shared account (returned by POST /cv-auth to licensed HWIDs)
 # ---------------------------------------------------------------------------
