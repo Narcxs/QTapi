@@ -259,14 +259,24 @@ async def _renew_payload(context, user):
 # --------------------------------------------------------------------------- #
 # user commands
 # --------------------------------------------------------------------------- #
+_GROUP_NOTICE = ("🔒 Please use my commands in a <b>private chat</b> with me — "
+                 "open a DM and send /start.")
+
+
 async def cmd_start(update: Update, context):
     """Hidden entry point (not in the menu): welcome + main menu buttons."""
+    if update.effective_chat.type != ChatType.PRIVATE:
+        await update.message.reply_text(_GROUP_NOTICE, parse_mode="HTML")
+        return
     await update.message.reply_text(
         _WELCOME, parse_mode="HTML",
         reply_markup=await _menu_keyboard(context, _is_admin(update.effective_user.id)))
 
 
 async def cmd_help(update: Update, context):
+    if update.effective_chat.type != ChatType.PRIVATE:
+        await update.message.reply_text(_GROUP_NOTICE, parse_mode="HTML")
+        return
     txt = _HELP
     if _is_admin(update.effective_user.id):
         txt += ("\n\n<b>Admin</b>\n/list\n/stats\n/grant <id> [days]\n"
@@ -420,6 +430,12 @@ async def cb_menu(update: Update, context):
     """Handles the main-menu buttons."""
     q = update.callback_query
     user = q.from_user
+    # buttons are private-chat only: never act from a group message
+    msg_chat = getattr(getattr(q, "message", None), "chat", None)
+    if msg_chat is not None and msg_chat.type != ChatType.PRIVATE:
+        await q.answer("Please use me in a private chat — open a DM and send /start.",
+                       show_alert=True)
+        return
     if q.data == "mqt_menu":
         if not _is_admin(user.id):
             await q.answer("Admin only.", show_alert=True)
@@ -576,6 +592,10 @@ async def cb_cv_decide(update: Update, context):
 async def cb_check_entry(update: Update, context):
     """Handles the '✅ Verify membership' button."""
     q = update.callback_query
+    msg_chat = getattr(getattr(q, "message", None), "chat", None)
+    if msg_chat is not None and msg_chat.type != ChatType.PRIVATE:
+        await q.answer("Please use me in a private chat.", show_alert=True)
+        return
     user = q.from_user
     if await _is_member(context, user.id):
         await q.answer("✅ Membership verified!")
