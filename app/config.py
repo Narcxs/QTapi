@@ -139,3 +139,15 @@ TELEGRAM_CHANNEL_LINK = os.getenv("TELEGRAM_CHANNEL_LINK", "").strip()
 # ---------------------------------------------------------------------------
 CV_SHARED_EMAIL = os.getenv("CV_SHARED_EMAIL", "").strip()
 CV_SHARED_PASSWORD = os.getenv("CV_SHARED_PASSWORD", "").strip()
+
+# ---------------------------------------------------------------------------
+# MenthorQ levels (api.menthorq.io) - fetched every MENTHORQ_POLL_INTERVAL
+# seconds and shared as free text in the Telegram bot
+# ---------------------------------------------------------------------------
+MENTHORQ_API_KEY = os.getenv("MENTHORQ_API_KEY", "").strip()
+MENTHORQ_BASE_URL = os.getenv("MENTHORQ_BASE_URL", "https://api.menthorq.io")
+MENTHORQ_PLATFORM = os.getenv("MENTHORQ_PLATFORM", "atas")
+MENTHORQ_TICKERS = [t.strip().upper()
+                    for t in os.getenv("MENTHORQ_TICKERS", "ES,NQ,VIX,GC").split(",")
+                    if t.strip()]
+MENTHORQ_POLL_INTERVAL = int(os.getenv("MENTHORQ_POLL_INTERVAL", "600"))

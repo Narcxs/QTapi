@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import api_data, config, db, history, hwids, market_hours, poller, storage, store, tokens
+from . import api_data, config, db, history, hwids, market_hours, menthorq, poller, storage, store, tokens
 from . import gexbot_client as gx
 from .cache import TTLCache
 
@@ -47,11 +47,13 @@ async def _startup():
     else:
         log.info("GEXBot key loaded (%d chars).", len(config.GEXBOT_API_KEY))
     poller.start()
+    menthorq.start()
 
 
 @app.on_event("shutdown")
 async def _shutdown():
     await poller.stop()
+    await menthorq.stop()
     await gx.aclose()
 
 

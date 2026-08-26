@@ -30,7 +30,7 @@ from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
-from . import config, hwids, tokens
+from . import config, hwids, menthorq, tokens
 
 _group_link_cache = {"link": None}
 
@@ -112,11 +112,12 @@ async def _links_row(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Main menu: token / renew / api health / cv license / links."""
+    """Main menu: token / renew / api health / cv license / menthorq / links."""
     rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
              InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")],
             [InlineKeyboardButton("🩺 API Health", callback_data="menu_health"),
-             InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv")]]
+             InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv")],
+            [InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -329,6 +330,83 @@ async def _health_text() -> str:
 
 
 # --------------------------------------------------------------------------- #
+# MenthorQ levels (free text, no token required)
+# --------------------------------------------------------------------------- #
+def _fnum(v) -> str:
+    if v is None:
+        return "-"
+    try:
+        s = f"{float(v):,.2f}".rstrip("0").rstrip(".")
+        return s or "0"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _mq_find(types: dict, level_type: str, name: str):
+    for lv in types.get(level_type, []):
+        if lv.get("name") == name:
+            return lv.get("value")
+    return None
+
+
+def _mq_summary_text(data: dict) -> str:
+    if not data:
+        return ("<b>📊 MenthorQ Levels</b>\n\n"
+                "No data yet — the first fetch runs shortly after server start. "
+                "Try again in a minute.")
+    from datetime import datetime, timezone
+    upd = max((r.get("fetched_at", 0) for r in data.values()), default=0)
+    upd_txt = (datetime.fromtimestamp(upd, tz=timezone.utc).strftime("%H:%M UTC")
+               if upd else "?")
+    lines = [f"<b>📊 MenthorQ Levels</b>  ·  updated {upd_txt}\n"]
+    for t in config.MENTHORQ_TICKERS:
+        rec = data.get(t)
+        if not rec:
+            continue
+        types = rec.get("types", {})
+        cr = _mq_find(types, "gamma_levels", "Call Resistance")
+        ps = _mq_find(types, "gamma_levels", "Put Support")
+        hvl = _mq_find(types, "gamma_levels", "HVL")
+        mn = _mq_find(types, "gamma_levels", "1D Min")
+        mx = _mq_find(types, "gamma_levels", "1D Max")
+        lines.append(f"<b>{t}</b>  <i>({rec.get('date', '')})</i>")
+        lines.append(f"CR <code>{_fnum(cr)}</code> · PS <code>{_fnum(ps)}</code> · "
+                     f"HVL <code>{_fnum(hvl)}</code>")
+        lines.append(f"1D <code>{_fnum(mn)}</code> – <code>{_fnum(mx)}</code>\n")
+    lines.append("Tap a ticker for full levels (0DTE, blindspots, swing):")
+    return "\n".join(lines)
+
+
+_MQ_SECTIONS = (("gamma_levels", "Gamma Levels (EOD)"),
+                ("gamma_levels_intraday", "Gamma Intraday"),
+                ("blindspots", "Blindspots"),
+                ("swing_levels", "Swing Levels"))
+
+
+def _mq_detail_text(data: dict, ticker: str) -> str:
+    rec = data.get(ticker)
+    if not rec:
+        return f"No MenthorQ data for {ticker} yet."
+    lines = [f"<b>📊 MenthorQ — {ticker}</b>  <i>({rec.get('date', '')})</i>\n"]
+    for lt, title in _MQ_SECTIONS:
+        vals = rec.get("types", {}).get(lt)
+        if not vals:
+            continue
+        lines.append(f"<b>{title}</b>")
+        for lv in vals:
+            lines.append(f"{lv.get('name')}: <code>{_fnum(lv.get('value'))}</code>")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _mq_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(t, callback_data=f"mq_{t}")
+        for t in config.MENTHORQ_TICKERS
+    ]])
+
+
+# --------------------------------------------------------------------------- #
 # buttons
 # --------------------------------------------------------------------------- #
 async def cb_menu(update: Update, context):
@@ -346,6 +424,12 @@ async def cb_menu(update: Update, context):
         return
     if q.data == "menu_health":
         text, markup = await _health_text(), await _menu_keyboard(context)
+    elif q.data == "menu_mq" or q.data == "mq_back":
+        text, markup = _mq_summary_text(menthorq.get_levels()), _mq_keyboard()
+    elif q.data.startswith("mq_"):
+        text = _mq_detail_text(menthorq.get_levels(), q.data[3:])
+        markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Back", callback_data="mq_back")]])
     elif q.data == "menu_renew":
         # renew only works after expiry -> popup instead of touching the card
         if await _is_member(context, user.id):
@@ -621,7 +705,8 @@ def main():
     app.add_handler(CommandHandler("cvremove", cmd_cvremove))
     app.add_handler(CommandHandler("cvlist", cmd_cvlist))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv|mq)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_cv_decide, pattern="^cv_(ok|no):"))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
