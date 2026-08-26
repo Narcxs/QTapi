@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import api_data, config, db, history, hwids, market_hours, menthorq, poller, storage, store, tokens
+from . import api_data, config, db, history, hwids, market_hours, menthorq, mq_tokens, poller, storage, store, tokens
 from . import gexbot_client as gx
 from .cache import TTLCache
 
@@ -308,6 +308,42 @@ async def cv_auth(request: Request):
                 "email": config.CV_SHARED_EMAIL,
                 "password": config.CV_SHARED_PASSWORD}
     return {"status": "unauthorized", "email": "", "password": ""}
+
+
+# --------------------------------------------------------------------------- #
+# MenthorQ levels feed for the NinjaTrader indicator (mq_ token required)
+# --------------------------------------------------------------------------- #
+_MQ_TAGS = (("gamma_levels", "GAMMA"),
+            ("gamma_levels_intraday", "INTRA"),
+            ("blindspots", "BL"),
+            ("swing_levels", "SWING"))
+
+
+@app.get("/menthorq/levels", response_class=PlainTextResponse)
+async def menthorq_levels(ticker: str = Query("ES"), token: str = Query("")):
+    """Pipe-delimited MenthorQ levels for the indicator.
+    Auth: mq_ token (created by the admin via the Telegram bot)."""
+    v = mq_tokens.validate(token)
+    if not v.get("ok"):
+        return ("STATUS=DENIED|UNAUTHORIZED - get your MenthorQ token "
+                "from the admin")
+
+    rec = menthorq.get_levels().get(ticker.upper())
+    if rec is None:
+        return ("STATUS=DENIED|NO_DATA - unknown ticker or levels not "
+                "fetched yet")
+
+    exp = v.get("expires_at")
+    exp_txt = (datetime.fromtimestamp(exp, tz=timezone.utc).strftime(
+        "%Y-%m-%d %H:%M UTC") if exp else "")
+    lines = [f"STATUS=OK|{exp_txt}", f"DATE={rec.get('date', '')}"]
+    for level_type, tag in _MQ_TAGS:
+        for lv in rec.get("types", {}).get(level_type, []):
+            name = lv.get("name")
+            val = _fmt(_num(lv.get("value")))
+            if name and val:
+                lines.append(f"{tag}|{name}|{val}")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #

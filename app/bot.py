@@ -30,7 +30,7 @@ from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
-from . import config, hwids, menthorq, tokens
+from . import config, hwids, menthorq, mq_tokens, tokens
 
 _group_link_cache = {"link": None}
 
@@ -111,13 +111,18 @@ async def _links_row(context: ContextTypes.DEFAULT_TYPE):
     return row
 
 
-async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Main menu: token / renew / api health / cv license / menthorq / links."""
+async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE,
+                         admin: bool = False) -> InlineKeyboardMarkup:
+    """Main menu: token / renew / api health / cv license / menthorq / links.
+    The admin gets an extra row: create MenthorQ tokens (mq_...)."""
     rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
              InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")],
             [InlineKeyboardButton("🩺 API Health", callback_data="menu_health"),
              InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv")],
             [InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
+    if admin:
+        rows.append([InlineKeyboardButton("🔐 Create MQ Token",
+                                          callback_data="mqt_menu")])
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -258,7 +263,7 @@ async def cmd_start(update: Update, context):
     """Hidden entry point (not in the menu): welcome + main menu buttons."""
     await update.message.reply_text(
         _WELCOME, parse_mode="HTML",
-        reply_markup=await _menu_keyboard(context))
+        reply_markup=await _menu_keyboard(context, _is_admin(update.effective_user.id)))
 
 
 async def cmd_help(update: Update, context):
@@ -266,9 +271,11 @@ async def cmd_help(update: Update, context):
     if _is_admin(update.effective_user.id):
         txt += ("\n\n<b>Admin</b>\n/list\n/stats\n/grant <id> [days]\n"
                 "/revoke <token>\n/revokeuser <id>\n\n"
-                "<b>ConvexValue</b>\n/cvadd <hwid>\n/cvremove <hwid>\n/cvlist")
+                "<b>ConvexValue</b>\n/cvadd <hwid>\n/cvremove <hwid>\n/cvlist\n\n"
+                "<b>MenthorQ</b>\n/mqlist\n/mqrevoke <token>")
     await update.message.reply_text(
-        txt, parse_mode="HTML", reply_markup=await _menu_keyboard(context))
+        txt, parse_mode="HTML",
+        reply_markup=await _menu_keyboard(context, _is_admin(update.effective_user.id)))
 
 
 async def cmd_mytoken(update: Update, context):
@@ -413,6 +420,39 @@ async def cb_menu(update: Update, context):
     """Handles the main-menu buttons."""
     q = update.callback_query
     user = q.from_user
+    if q.data == "mqt_menu":
+        if not _is_admin(user.id):
+            await q.answer("Admin only.", show_alert=True)
+            return
+        await q.answer()
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("1 week", callback_data="mqt_7"),
+            InlineKeyboardButton("2 weeks", callback_data="mqt_14"),
+            InlineKeyboardButton("1 month", callback_data="mqt_30"),
+        ]])
+        await q.edit_message_text(
+            "<b>🔐 Create MenthorQ Token</b>\n\nChoose the validity period:",
+            parse_mode="HTML", reply_markup=kb)
+        return
+    if q.data.startswith("mqt_"):
+        if not _is_admin(user.id):
+            await q.answer("Admin only.", show_alert=True)
+            return
+        days = int(q.data.split("_")[1])
+        token, rec = mq_tokens.create(days)
+        await q.answer("Token created ✅")
+        try:
+            await q.edit_message_text(
+                "<b>🔐 MenthorQ Token created</b>\n\n"
+                f"Valid until: <b>{mq_tokens.fmt_exp(rec)}</b>\n\n"
+                f"<code>{token}</code>\n\n"
+                "Share it with your client — they paste it in the indicator's "
+                "<b>MQ Token</b> setting.\n"
+                "Manage: /mqlist · /mqrevoke &lt;token&gt;",
+                parse_mode="HTML")
+        except Exception:  # noqa: BLE001 - message too old
+            await q.message.reply_text(f"<code>{token}</code>", parse_mode="HTML")
+        return
     if q.data == "menu_cv":
         _cv_awaiting_hwid.add(user.id)
         await q.answer()
@@ -423,7 +463,7 @@ async def cb_menu(update: Update, context):
             parse_mode="HTML")
         return
     if q.data == "menu_health":
-        text, markup = await _health_text(), await _menu_keyboard(context)
+        text, markup = await _health_text(), await _menu_keyboard(context, _is_admin(user.id))
     elif q.data in ("menu_mq", "mq_back") or q.data.startswith("mq_"):
         # MenthorQ levels: free of charge, but GROUP MEMBERS ONLY
         if not await _is_member(context, user.id):
@@ -666,6 +706,37 @@ async def cmd_cvlist(update: Update, context):
 
 
 # --------------------------------------------------------------------------- #
+# MenthorQ tokens (admin only)
+# --------------------------------------------------------------------------- #
+async def cmd_mqlist(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    items = mq_tokens.list_all()
+    if not items:
+        await update.message.reply_text(
+            "No MenthorQ tokens yet. Create one with the 🔐 button in /start.")
+        return
+    lines = ["<b>🔐 MenthorQ tokens</b>\n"]
+    for t, rec in items:
+        flag = "REVOKED" if rec.get("revoked") else mq_tokens.fmt_exp(rec)
+        label = f" ({rec.get('label')})" if rec.get("label") else ""
+        lines.append(f"<code>{t[:16]}…</code> — {flag}{label}")
+    text = "\n".join(lines)
+    for i in range(0, len(text), 3500):
+        await update.message.reply_text(text[i:i + 3500], parse_mode="HTML")
+
+
+async def cmd_mqrevoke(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /mqrevoke <token>")
+        return
+    ok = mq_tokens.revoke(context.args[0])
+    await update.message.reply_text("Revoked." if ok else "Token not found.")
+
+
+# --------------------------------------------------------------------------- #
 # never crash
 # --------------------------------------------------------------------------- #
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -708,9 +779,12 @@ def main():
     app.add_handler(CommandHandler("cvadd", cmd_cvadd))
     app.add_handler(CommandHandler("cvremove", cmd_cvremove))
     app.add_handler(CommandHandler("cvlist", cmd_cvlist))
+    app.add_handler(CommandHandler("mqlist", cmd_mqlist))
+    app.add_handler(CommandHandler("mqrevoke", cmd_mqrevoke))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv|mq)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
     app.add_handler(CallbackQueryHandler(cb_cv_decide, pattern="^cv_(ok|no):"))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
