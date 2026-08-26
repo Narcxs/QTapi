@@ -424,12 +424,16 @@ async def cb_menu(update: Update, context):
         return
     if q.data == "menu_health":
         text, markup = await _health_text(), await _menu_keyboard(context)
-    elif q.data == "menu_mq" or q.data == "mq_back":
-        text, markup = _mq_summary_text(menthorq.get_levels()), _mq_keyboard()
-    elif q.data.startswith("mq_"):
-        text = _mq_detail_text(menthorq.get_levels(), q.data[3:])
-        markup = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⬅️ Back", callback_data="mq_back")]])
+    elif q.data in ("menu_mq", "mq_back") or q.data.startswith("mq_"):
+        # MenthorQ levels: free of charge, but GROUP MEMBERS ONLY
+        if not await _is_member(context, user.id):
+            text, markup = _JOIN, await _join_keyboard(context)
+        elif q.data == "menu_mq" or q.data == "mq_back":
+            text, markup = _mq_summary_text(menthorq.get_levels()), _mq_keyboard()
+        else:
+            text = _mq_detail_text(menthorq.get_levels(), q.data[3:])
+            markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Back", callback_data="mq_back")]])
     elif q.data == "menu_renew":
         # renew only works after expiry -> popup instead of touching the card
         if await _is_member(context, user.id):
