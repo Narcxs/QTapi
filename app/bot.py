@@ -20,6 +20,7 @@ Admin (only TELEGRAM_ADMIN_ID, hidden from the menu):
 Designed to NOT crash: every handler is wrapped by a global error handler, and
 the membership check never raises. Run with:  python -m app.bot
 """
+import asyncio
 import logging
 import secrets
 import time
@@ -32,7 +33,7 @@ from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
-from . import config, hwids, menthorq, mq_tokens, tokens, warns
+from . import config, hwids, menthorq, mq_tokens, subscribers, tokens, warns
 
 _group_link_cache = {"link": None}
 
@@ -49,6 +50,9 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 _MEMBER_OK = {"creator", "administrator", "member", "restricted"}
+
+# renewal is allowed once the token expires OR within its last 24 hours
+_RENEW_WINDOW_SEC = 86400
 
 
 def _is_admin(user_id: int) -> bool:
@@ -124,7 +128,9 @@ async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE,
             [InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
     if admin:
         rows.append([InlineKeyboardButton("🔐 Create MQ Token",
-                                          callback_data="mqt_menu")])
+                                          callback_data="mqt_menu"),
+                     InlineKeyboardButton("📢 Broadcast",
+                                          callback_data="bcast_menu")])
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -215,7 +221,8 @@ def _renew_wait_msg(rec: dict) -> str:
     return (
         "<b>⏳ Renewal not available yet</b>\n\n"
         f"Your current token is still valid until <b>{tokens.fmt_exp(rec)}</b>.\n"
-        "You can request a fresh token once it expires."
+        "You can request a fresh token once it expires, or within its last "
+        "24 hours."
     )
 
 
@@ -242,13 +249,15 @@ async def _mytoken_payload(context, user):
 
 
 async def _renew_payload(context, user):
-    """Renew ONLY once the current token has expired."""
+    """Renew once the token has expired (or within its last 24 hours)."""
     if not await _is_member(context, user.id):
         return _JOIN, await _join_keyboard(context)
     rec = tokens.get_user(user.id)
-    if rec:  # still valid -> refuse
-        return _renew_wait_msg(rec), InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token")]])
+    if rec:  # still valid -> refuse unless within the renewal window
+        remaining = (rec.get("expires_at") or 0) - int(time.time())
+        if remaining > _RENEW_WINDOW_SEC:
+            return _renew_wait_msg(rec), InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token")]])
     last = tokens.get_user_any(user.id)
     if last and last.get("revoked"):
         return _REVOKED, None
@@ -494,13 +503,14 @@ async def cb_menu(update: Update, context):
             markup = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("⬅️ Back", callback_data="mq_back")]])
     elif q.data == "menu_renew":
-        # renew only works after expiry -> popup instead of touching the card
+        # renew only works after expiry (or in the last 24h before it)
         if await _is_member(context, user.id):
             rec = tokens.get_user(user.id)
-            if rec:
+            if rec and (rec.get("expires_at") or 0) - int(time.time()) > _RENEW_WINDOW_SEC:
                 await q.answer(
                     f"⏳ Your token is still valid until {tokens.fmt_exp(rec)}.\n"
-                    "Renewal becomes available once it expires.",
+                    "Renewal becomes available once it expires, "
+                    "or within its last 24 hours.",
                     show_alert=True)
                 return
         text, markup = await _renew_payload(context, user)
@@ -874,6 +884,98 @@ async def cmd_unwarn(update: Update, context):
 
 
 # --------------------------------------------------------------------------- #
+# subscriber tracking (records every private user, for broadcasts)
+# --------------------------------------------------------------------------- #
+async def track_subscriber(update: Update, context):
+    u = update.effective_user
+    if u is not None and not u.is_bot:
+        subscribers.touch(u.id, u.username or "")
+
+
+# --------------------------------------------------------------------------- #
+# broadcast (admin only): /broadcast <text> + the 📢 button flow
+# --------------------------------------------------------------------------- #
+_RENEW_BROADCAST = (
+    "♻️ <b>Token renewal</b>\n\n"
+    "Your QTapi token expires soon (or has already expired).\n"
+    "Renew it in 10 seconds, right here in private:\n\n"
+    "1️⃣ Send <b>/renew</b>\n"
+    "2️⃣ Copy your fresh token\n"
+    "3️⃣ Paste it in your indicator settings\n\n"
+    "<i>Renewal works once your token is expired — or within its last "
+    "24 hours.</i>"
+)
+
+
+async def _broadcast_all(context, text: str):
+    """Send `text` to every reachable subscriber. Returns (sent, failed)."""
+    sent = failed = 0
+    for uid, _uname in subscribers.list_active():
+        try:
+            await context.bot.send_message(uid, text, parse_mode="HTML")
+            sent += 1
+        except Exception:  # noqa: BLE001 - user blocked the bot
+            failed += 1
+            subscribers.mark_blocked(uid)
+        await asyncio.sleep(0.05)          # ~20 msg/s: safe for Telegram limits
+    return sent, failed
+
+
+async def cmd_broadcast(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    text = " ".join(context.args).strip()
+    if not text:
+        await update.message.reply_text(
+            "Usage: /broadcast <message>\n"
+            f"(subscribers: {subscribers.count()})")
+        return
+    await update.message.reply_text("📢 Broadcasting…")
+    sent, failed = await _broadcast_all(context, text)
+    await update.message.reply_text(
+        f"📢 Done: <b>{sent}</b> sent, {failed} failed (blocked).",
+        parse_mode="HTML")
+
+
+async def cb_broadcast(update: Update, context):
+    """Admin's 📢 Broadcast button flow."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("Admin only.", show_alert=True)
+        return
+    if q.data == "bcast_menu":
+        await q.answer()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("♻️ Send renew reminder",
+                                  callback_data="bcast_renew")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="bcast_cancel")],
+        ])
+        await q.edit_message_text(
+            f"<b>📢 Broadcast</b>\n\nSubscribers: <b>{subscribers.count()}</b>\n\n"
+            "Send the pre-written token-renewal reminder to everyone?\n"
+            "<i>For a custom message use /broadcast &lt;text&gt;</i>",
+            parse_mode="HTML", reply_markup=kb)
+        return
+    if q.data == "bcast_cancel":
+        await q.answer()
+        try:
+            await q.edit_message_text("Broadcast cancelled.")
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    if q.data == "bcast_renew":
+        await q.answer("Sending…")
+        sent, failed = await _broadcast_all(context, _RENEW_BROADCAST)
+        try:
+            await q.edit_message_text(
+                f"📢 Renew reminder sent to <b>{sent}</b> users "
+                f"({failed} failed/blocked).", parse_mode="HTML")
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
+
+# --------------------------------------------------------------------------- #
 # never crash
 # --------------------------------------------------------------------------- #
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -921,13 +1023,19 @@ def main():
     app.add_handler(CommandHandler("warn", cmd_warn))
     app.add_handler(CommandHandler("warns", cmd_warns))
     app.add_handler(CommandHandler("unwarn", cmd_unwarn))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv|mq)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
     app.add_handler(CallbackQueryHandler(cb_cv_decide, pattern="^cv_(ok|no):"))
+    app.add_handler(CallbackQueryHandler(cb_broadcast, pattern="^bcast_(menu|renew|cancel)$"))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
+    # subscriber tracking: every private message, in a SEPARATE handler group
+    # (group 1) so it never interferes with the command handlers above
+    app.add_handler(MessageHandler(filters.ALL & filters.ChatType.PRIVATE,
+                                   track_subscriber), group=1)
     app.add_error_handler(on_error)
 
     log.info("QTapi bot starting (admin=%s, group=%s)...",
