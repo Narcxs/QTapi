@@ -1,0 +1,14 @@
+[Unit]
+Description=QTapi Telegram bot (tokens, MenthorQ levels, moderation)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/QTapi
+ExecStart=/root/QTapi/venv/bin/python -m app.bot
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

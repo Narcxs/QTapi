@@ -1,6 +1,6 @@
 # NOTE: .env is intentionally NOT ignored (committed ready-to-run on purpose).
+# NOTE: data/ is intentionally NOT ignored either (private repo - it carries
+# the tokens/licenses so a fresh `git clone` is a full backup/migration).
 venv/
 __pycache__/
 *.pyc
-data/*/
-data/*.json
