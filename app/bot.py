@@ -140,12 +140,9 @@ async def _join_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMa
 
 
 async def _premium_join_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    rows = []
-    link = await _premium_group_link(context)
-    if link:
-        rows.append([InlineKeyboardButton("⭐ Join Premium Group", url=link)])
-    rows.append([InlineKeyboardButton("✅ Verify Premium Membership", callback_data="verify_premium")])
-    rows.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")])
+    rows = [
+        [InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")]
+    ]
     return InlineKeyboardMarkup(rows)
 
 
@@ -237,12 +234,12 @@ _JOIN = (
 
 _PREMIUM_JOIN = (
     "<b>⭐ QTapi — Premium Access</b>\n\n"
-    "Premium tokens unlock access to <b>GLD, VIX, SPX, SPY, NDX, QQQ</b> "
-    "(and futures <b>ES, NQ, GC, VX</b>) with <b>permanent validity (no expiration)</b>.\n\n"
-    "To activate a Premium token, you must be a member of our Premium group:\n"
-    f"<b>Group ID:</b> <code>{config.TELEGRAM_PREMIUM_GROUP_ID}</code>\n\n"
-    "1️⃣ Join the Premium group\n"
-    "2️⃣ Tap <b>Verify Premium Membership</b> below"
+    "❌ <b>You are not a Premium member.</b>\n\n"
+    "Premium tokens unlock exclusive advantages:\n"
+    "• <b>GLD, VIX, SPX, SPY, NDX, QQQ</b>\n"
+    "• Futures <b>ES, NQ, GC, VX</b>\n"
+    "• <b>Permanent validity (no expiration)</b>\n\n"
+    "Premium access is granted manually. Please contact the admin to request access."
 )
 
 _REVOKED = (
