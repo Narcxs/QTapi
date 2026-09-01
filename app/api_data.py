@@ -36,20 +36,39 @@ _OLD_PACKAGES = _PACKAGES + _GREEKS          # old model: greek was a package
 _CACHE_HEADERS = {"Cache-Control": f"public, max-age={max(1, int(config.POLL_INTERVAL))}"}
 
 
-def _auth_ok(token: str) -> bool:
-    # If per-user tokens are required, accept the master token OR a valid
-    # bot-issued token. If not required, the API is open.
-    if not config.REQUIRE_TOKEN:
-        return True
+def _auth_ok(token: str, ticker: str = "", future: bool = False) -> tuple:
+    # Returns (is_ok: bool, reason: str)
     if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
-        return True
-    return tokens.validate(token).get("ok", False)
+        return True, "OK"
+    fut_str = ""
+    if future and ticker:
+        fut_str = config.FUTURES_MAP.get(ticker.upper(), "")
+    v = tokens.validate(token, ticker=ticker, future=fut_str)
+
+    # Premium tickers ALWAYS require a premium token (even if REQUIRE_TOKEN=0 for free ones)
+    is_prem = (ticker and ticker.upper() in config.PREMIUM_TICKERS) or (fut_str in {"GC", "VX"})
+    if is_prem:
+        if not v.get("ok"):
+            return False, v.get("reason", "PREMIUM_REQUIRED")
+        return True, "OK"
+
+    if not config.REQUIRE_TOKEN:
+        return True, "OK"
+
+    if not v.get("ok"):
+        return False, v.get("reason", "UNAUTHORIZED")
+    return True, "OK"
 
 
-def _deny():
+def _deny(reason: str = "UNAUTHORIZED"):
+    if reason == "PREMIUM_REQUIRED":
+        return JSONResponse(
+            {"error": "premium_required",
+             "hint": "GLD and VIX require a Premium token. Join group -1003822153102 to get one."},
+            403)
     return JSONResponse(
         {"error": "unauthorized",
-         "hint": "get your free token from our Telegram bot, then add &token=..."},
+         "hint": "get your token from our Telegram bot, then add &token=..."},
         401)
 
 
@@ -79,6 +98,9 @@ def _serve(package: str, instrument: str, period, raw: bool, future: bool):
 def _serve_new(ticker: str, package: str, category: str, raw: bool, future: bool):
     """Official-style route: /api/{ticker}/{package}/{category}."""
     t = ticker.upper()
+    if t in config.TICKER_ALIASES:
+        t, _ = config.TICKER_ALIASES[t]
+        future = True
     if t not in config.POLLED_TICKERS:
         return _err(404, error="unknown ticker", ticker=t,
                     hint="available: " + ",".join(config.POLLED_TICKERS))
@@ -116,8 +138,9 @@ def _serve_new(ticker: str, package: str, category: str, raw: bool, future: bool
 @router.get("")
 @router.get("/")
 async def index(request: Request, token: str = Query("")):
-    if not _auth_ok(token):
-        return _deny()
+    ok, reason = _auth_ok(token)
+    if not ok:
+        return _deny(reason)
     base = str(request.base_url).rstrip("/")
 
     def url(path, *params):
@@ -164,8 +187,9 @@ async def index(request: Request, token: str = Query("")):
 @router.get("/tickers")
 async def tickers(token: str = Query("")):
     """Mirror of the official GET /tickers (limited to what we poll)."""
-    if not _auth_ok(token):
-        return _deny()
+    ok, reason = _auth_ok(token)
+    if not ok:
+        return _deny(reason)
     polled = set(config.POLLED_TICKERS)
     out = {"stocks": [], "indexes": [], "futures": []}
     for t in ("SPY", "QQQ", "IWM", "DIA", "GLD", "USO"):
@@ -175,7 +199,8 @@ async def tickers(token: str = Query("")):
         if t in polled:
             out["indexes"].append(t)
     if config.AUTO_CONVERT:
-        fut = {"ES": "ES_SPX", "NQ": "NQ_NDX", "RTY": "RTY_RUT", "YM": "YM_DIA"}
+        fut = {"ES": "ES_SPX", "NQ": "NQ_NDX", "RTY": "RTY_RUT", "YM": "YM_DIA",
+               "GC": "GC_GLD", "VX": "VX_VIX"}
         for t in config.POLLED_TICKERS:
             f = config.FUTURES_MAP.get(t)
             if f and fut.get(f) and fut[f] not in out["futures"]:
@@ -187,12 +212,13 @@ async def tickers(token: str = Query("")):
 async def two_segments(a: str, b: str,
                        token: str = Query(""), raw: bool = Query(False),
                        future: bool = Query(False)):
-    if not _auth_ok(token):
-        return _deny()
     al, bl = a.lower(), b.lower()
 
     # official GET /{package}/categories (category names carry the gex_ prefix)
     if al in _PACKAGES and bl == "categories":
+        ok, reason = _auth_ok(token)
+        if not ok:
+            return _deny(reason)
         if al == "orderflow":
             return ["orderflow"]
         cats = [f"gex_{p}" for p in config.POLL_PERIODS]
@@ -203,11 +229,17 @@ async def two_segments(a: str, b: str,
 
     # old model: /api/{package}/{instrument} (orderflow or DEFAULT_PERIOD)
     if al in _OLD_PACKAGES:
+        ok, reason = _auth_ok(token, ticker=b, future=future)
+        if not ok:
+            return _deny(reason)
         period = None if al == "orderflow" else config.DEFAULT_PERIOD
         return _serve(al, b, period, raw, future)
 
     # new model alias: /api/{ticker}/orderflow
     if bl == "orderflow":
+        ok, reason = _auth_ok(token, ticker=a, future=future)
+        if not ok:
+            return _deny(reason)
         return _serve("orderflow", a, None, raw, future)
 
     return _err(400, error="bad request",
@@ -218,10 +250,14 @@ async def two_segments(a: str, b: str,
 async def three_segments(a: str, b: str, c: str,
                          token: str = Query(""), raw: bool = Query(False),
                          future: bool = Query(False)):
-    if not _auth_ok(token):
-        return _deny()
     # old model: /api/{package}/{instrument}/{period}
     if a.lower() in _OLD_PACKAGES:
+        ok, reason = _auth_ok(token, ticker=b, future=future)
+        if not ok:
+            return _deny(reason)
         return _serve(a, b, c, raw, future)
     # new (official) model: /api/{ticker}/{package}/{category}
+    ok, reason = _auth_ok(token, ticker=a, future=future)
+    if not ok:
+        return _deny(reason)
     return _serve_new(a, b, c, raw, future)

@@ -136,10 +136,20 @@ async def data_file(ticker: str = Query(...),
                     token: str = Query("")):
     """Return the exact saved JSON file (envelope + raw GEXBot data).
     future=1 returns the futures-converted variant for mapped instruments."""
-    ok, _ = await _feed_auth(key, token)
+    t_up = ticker.strip().upper()
+    if t_up in config.TICKER_ALIASES:
+        ticker, _ = config.TICKER_ALIASES[t_up]
+        future = True
+
+    fut_str = config.FUTURES_MAP.get(ticker.upper(), "") if future else ""
+    ok, _, reason = await _feed_auth(key, token, ticker=ticker, future=fut_str)
     if not ok:
+        if reason == "PREMIUM_REQUIRED":
+            return JSONResponse({"status": "DENIED",
+                                 "reason": "PREMIUM_REQUIRED - GLD and VIX require a Premium token. "
+                                           "Join group -1003822153102 to get one."}, 403)
         return JSONResponse({"status": "DENIED",
-                             "reason": "UNAUTHORIZED - get your free token "
+                             "reason": "UNAUTHORIZED - get your token "
                                        "from our Telegram bot"}, 403)
     if package not in ("classic", "state", "orderflow",
                        "delta", "gamma", "vanna", "charm"):
@@ -154,21 +164,32 @@ async def data_file(ticker: str = Query(...),
 # --------------------------------------------------------------------------- #
 # indicator feeds auth: per-user token (REQUIRE_TOKEN=1) or legacy license key
 # --------------------------------------------------------------------------- #
-async def _feed_auth(key: str, token: str):
-    """Return (ok, expiry_text). Denial is expressed as ok=False."""
-    if config.REQUIRE_TOKEN:
-        if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
-            return True, ""
-        v = tokens.validate(token)
+async def _feed_auth(key: str, token: str, ticker: str = "", future: str = ""):
+    """Return (ok, expiry_text, reason). Denial is expressed as ok=False."""
+    if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
+        return True, "MASTER", "OK"
+
+    v = tokens.validate(token, ticker=ticker, future=future)
+    fut_str = (future or "").strip().upper()
+    is_prem = (ticker and ticker.strip().upper() in config.PREMIUM_TICKERS) or (fut_str in {"GC", "VX"})
+
+    # If requesting a premium ticker/future, premium token is required
+    if is_prem:
         if not v.get("ok"):
-            return False, ""
+            return False, "", v.get("reason", "PREMIUM_REQUIRED")
         exp = v.get("expires_at")
-        if exp:
-            return True, datetime.fromtimestamp(exp, tz=timezone.utc).strftime(
-                "%Y-%m-%d %H:%M UTC")
-        return True, ""
+        exp_txt = "PREMIUM (no expiry)" if not exp else datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return True, exp_txt, "OK"
+
+    if config.REQUIRE_TOKEN:
+        if not v.get("ok"):
+            return False, "", v.get("reason", "UNAUTHORIZED")
+        exp = v.get("expires_at")
+        exp_txt = "PREMIUM (no expiry)" if not exp else datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return True, exp_txt, "OK"
+
     sub = await verify_cached(key)
-    return (bool(sub.get("ok")), sub.get("expires_at") or "")
+    return (bool(sub.get("ok")), sub.get("expires_at") or "", sub.get("reason", "OK"))
 
 
 # --------------------------------------------------------------------------- #
@@ -184,9 +205,18 @@ _GREEK_SYMBOLS = {"delta": "Δ", "gamma": "γ", "vanna": "ν", "charm": "χ"}
 async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
                   period: str = Query(None), future: str = Query(""),
                   token: str = Query(""), greek: str = Query("gamma")):
-    ok, exp_txt = await _feed_auth(key, token)
+    t_up = (ticker or "SPX").strip().upper()
+    if t_up in config.TICKER_ALIASES:
+        ticker, auto_fut = config.TICKER_ALIASES[t_up]
+        if not future:
+            future = auto_fut
+
+    ok, exp_txt, reason = await _feed_auth(key, token, ticker=ticker, future=future)
     if not ok:
-        return ("STATUS=DENIED|UNAUTHORIZED - get your free token "
+        if reason == "PREMIUM_REQUIRED":
+            return ("STATUS=DENIED|PREMIUM_REQUIRED - GLD and VIX require a Premium token "
+                    f"(join group {config.TELEGRAM_PREMIUM_GROUP_ID})")
+        return ("STATUS=DENIED|UNAUTHORIZED - get your token "
                 "from our Telegram bot")
 
     period = period or config.DEFAULT_PERIOD
@@ -363,9 +393,18 @@ _OF_METRICS = [
 @app.get("/orderflow", response_class=PlainTextResponse)
 async def orderflow(ticker: str = Query("SPX"), key: str = Query(""),
                     future: str = Query(""), token: str = Query("")):
-    ok, exp_txt = await _feed_auth(key, token)
+    t_up = (ticker or "SPX").strip().upper()
+    if t_up in config.TICKER_ALIASES:
+        ticker, auto_fut = config.TICKER_ALIASES[t_up]
+        if not future:
+            future = auto_fut
+
+    ok, exp_txt, reason = await _feed_auth(key, token, ticker=ticker, future=future)
     if not ok:
-        return ("STATUS=DENIED|UNAUTHORIZED - get your free token "
+        if reason == "PREMIUM_REQUIRED":
+            return ("STATUS=DENIED|PREMIUM_REQUIRED - GLD and VIX require a Premium token "
+                    f"(join group {config.TELEGRAM_PREMIUM_GROUP_ID})")
+        return ("STATUS=DENIED|UNAUTHORIZED - get your token "
                 "from our Telegram bot")
 
     conv = await gx.get_conversion(ticker, future) if future else None

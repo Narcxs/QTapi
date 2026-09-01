@@ -72,7 +72,7 @@ def _save(data: dict) -> None:
 # --------------------------------------------------------------------------- #
 # read (used by the API)
 # --------------------------------------------------------------------------- #
-def validate(token: str) -> dict:
+def validate(token: str, ticker: str = None, future: str = None) -> dict:
     if not token:
         return {"ok": False, "reason": "NO_TOKEN"}
     rec = _load_cached().get("tokens", {}).get(token)
@@ -83,7 +83,31 @@ def validate(token: str) -> dict:
     exp = rec.get("expires_at")
     if exp and _now() > exp:
         return {"ok": False, "reason": "EXPIRED"}
-    return {"ok": True, "reason": "OK", "expires_at": exp,
+    
+    tier = rec.get("tier", "free")
+    
+    # Resolve aliases (e.g. ES_SPX -> SPX, GC_GLD -> GLD)
+    if ticker:
+        t_up = ticker.strip().upper()
+        if t_up in config.TICKER_ALIASES:
+            t_base, auto_fut = config.TICKER_ALIASES[t_up]
+            ticker = t_base
+            if not future:
+                future = auto_fut
+
+    # Check premium-only tickers and futures
+    if ticker:
+        t = ticker.strip().upper()
+        if t in config.PREMIUM_TICKERS and tier != "premium":
+            return {"ok": False, "reason": "PREMIUM_REQUIRED", "tier": tier,
+                    "expires_at": exp, "telegram_id": rec.get("telegram_id")}
+    if future:
+        f = future.strip().upper()
+        if f in {"GC", "VX"} and tier != "premium":
+            return {"ok": False, "reason": "PREMIUM_REQUIRED", "tier": tier,
+                    "expires_at": exp, "telegram_id": rec.get("telegram_id")}
+
+    return {"ok": True, "reason": "OK", "tier": tier, "expires_at": exp,
             "telegram_id": rec.get("telegram_id")}
 
 
@@ -93,8 +117,12 @@ def validate(token: str) -> dict:
 def fmt_exp(rec: dict) -> str:
     exp = rec.get("expires_at")
     if not exp:
-        return "never"
+        return "Permanent (no expiry)"
     return datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def fmt_tier(rec: dict) -> str:
+    return "⭐ Premium" if rec.get("tier") == "premium" else "🆓 Free"
 
 
 def _active(rec: dict) -> bool:
@@ -132,34 +160,62 @@ def get_user_any(telegram_id: int):
     return best
 
 
-def create_or_get(telegram_id: int, username: str, days: int):
+def create_or_get(telegram_id: int, username: str, days: int = 7, tier: str = "free"):
     """Return the user's existing active token, or create a new one."""
     with _lock:
         data = _load_raw()
         toks = data["tokens"]
         for t, rec in toks.items():
             if rec.get("telegram_id") == telegram_id and _active(rec):
+                # If requesting premium but currently only free, upgrade
+                if tier == "premium" and rec.get("tier") != "premium":
+                    rec["tier"] = "premium"
+                    rec["expires_at"] = None
+                    _save(data)
+                    return t, rec
                 return t, rec
-        return _issue(data, telegram_id, username, days)
+        return _issue(data, telegram_id, username, days, tier)
 
 
-def renew(telegram_id: int, username: str, days: int):
+def grant_premium(telegram_id: int, username: str):
+    """Revoke previous and grant an indefinite Premium token."""
+    with _lock:
+        data = _load_raw()
+        for t, rec in data["tokens"].items():
+            if rec.get("telegram_id") == telegram_id:
+                rec["revoked"] = True
+        return _issue(data, telegram_id, username, days=0, tier="premium")
+
+
+def grant_free(telegram_id: int, username: str, days: int = 7):
+    """Revoke previous and grant a Free token with specified days."""
+    with _lock:
+        data = _load_raw()
+        for t, rec in data["tokens"].items():
+            if rec.get("telegram_id") == telegram_id:
+                rec["revoked"] = True
+        return _issue(data, telegram_id, username, days=days, tier="free")
+
+
+def renew(telegram_id: int, username: str, days: int = 7, tier: str = "free"):
     """Revoke any existing tokens for the user and issue a fresh one."""
     with _lock:
         data = _load_raw()
         for t, rec in data["tokens"].items():
             if rec.get("telegram_id") == telegram_id:
                 rec["revoked"] = True
-        return _issue(data, telegram_id, username, days)
+        return _issue(data, telegram_id, username, days, tier)
 
 
-def _issue(data: dict, telegram_id: int, username: str, days: int):
+def _issue(data: dict, telegram_id: int, username: str, days: int = 7, tier: str = "free"):
     token = "qt_" + secrets.token_urlsafe(24)
+    exp = None if tier == "premium" else (_now() + days * 86400)
     rec = {
         "telegram_id": telegram_id,
         "username": username,
+        "tier": tier,
         "created_at": _now(),
-        "expires_at": _now() + days * 86400,
+        "expires_at": exp,
         "revoked": False,
     }
     data["tokens"][token] = rec
@@ -190,18 +246,33 @@ def revoke_user(telegram_id: int) -> int:
         return n
 
 
-def list_all():
-    return list(_load_cached().get("tokens", {}).items())
+def list_all(tier_filter: str = None, only_active: bool = False):
+    items = list(_load_cached().get("tokens", {}).items())
+    # Sort by created_at descending (most recent first)
+    items.sort(key=lambda x: x[1].get("created_at", 0), reverse=True)
+    if tier_filter:
+        items = [x for x in items if x[1].get("tier", "free") == tier_filter]
+    if only_active:
+        items = [x for x in items if _active(x[1])]
+    return items
 
 
 def stats() -> dict:
-    total = active = expired = revoked = 0
+    total = active = expired = revoked = premium = free = 0
     for rec in _load_cached().get("tokens", {}).values():
         total += 1
+        is_prem = rec.get("tier") == "premium"
+        if is_prem:
+            premium += 1
+        else:
+            free += 1
         if rec.get("revoked"):
             revoked += 1
         elif rec.get("expires_at") and _now() > rec["expires_at"]:
             expired += 1
         else:
             active += 1
-    return {"total": total, "active": active, "expired": expired, "revoked": revoked}
+    return {
+        "total": total, "active": active, "expired": expired,
+        "revoked": revoked, "premium": premium, "free": free
+    }

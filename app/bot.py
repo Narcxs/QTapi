@@ -60,7 +60,7 @@ def _is_admin(user_id: int) -> bool:
 
 
 async def _is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """True if the user belongs to the required group. Never raises."""
+    """True if the user belongs to the required free group. Never raises."""
     if not config.TELEGRAM_GROUP_ID:
         return True
     try:
@@ -71,8 +71,23 @@ async def _is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
         return False
 
 
+_premium_group_link_cache = {"link": None}
+
+
+async def _is_premium_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """True if the user belongs to the premium group (-1003822153102). Never raises."""
+    if not config.TELEGRAM_PREMIUM_GROUP_ID:
+        return False
+    try:
+        m = await context.bot.get_chat_member(config.TELEGRAM_PREMIUM_GROUP_ID, user_id)
+        return m.status in _MEMBER_OK
+    except Exception as e:  # noqa: BLE001
+        log.warning("premium membership check failed for %s: %s", user_id, e)
+        return False
+
+
 async def _group_link(context: ContextTypes.DEFAULT_TYPE):
-    """Return an invite link for the group, or None. Cached after first success."""
+    """Return an invite link for the free group, or None. Cached after first success."""
     if config.TELEGRAM_GROUP_LINK:
         return config.TELEGRAM_GROUP_LINK
     if _group_link_cache["link"]:
@@ -87,6 +102,25 @@ async def _group_link(context: ContextTypes.DEFAULT_TYPE):
         return link
     except Exception as e:  # noqa: BLE001
         log.warning("cannot get group invite link: %s", e)
+        return None
+
+
+async def _premium_group_link(context: ContextTypes.DEFAULT_TYPE):
+    """Return an invite link for the premium group, or None."""
+    if config.TELEGRAM_PREMIUM_GROUP_LINK:
+        return config.TELEGRAM_PREMIUM_GROUP_LINK
+    if _premium_group_link_cache["link"]:
+        return _premium_group_link_cache["link"]
+    if not config.TELEGRAM_PREMIUM_GROUP_ID:
+        return None
+    try:
+        chat = await context.bot.get_chat(config.TELEGRAM_PREMIUM_GROUP_ID)
+        link = chat.invite_link or await context.bot.export_chat_invite_link(
+            config.TELEGRAM_PREMIUM_GROUP_ID)
+        _premium_group_link_cache["link"] = link
+        return link
+    except Exception as e:  # noqa: BLE001
+        log.warning("cannot get premium group invite link: %s", e)
         return None
 
 
@@ -105,6 +139,16 @@ async def _join_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMa
     return InlineKeyboardMarkup(rows)
 
 
+async def _premium_join_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    rows = []
+    link = await _premium_group_link(context)
+    if link:
+        rows.append([InlineKeyboardButton("⭐ Join Premium Group", url=link)])
+    rows.append([InlineKeyboardButton("✅ Verify Premium Membership", callback_data="verify_premium")])
+    rows.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def _links_row(context: ContextTypes.DEFAULT_TYPE):
     """One row with the public links (Documentation in the group + channel)."""
     row = []
@@ -120,26 +164,33 @@ async def _links_row(context: ContextTypes.DEFAULT_TYPE):
 async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE,
                          admin: bool = False) -> InlineKeyboardMarkup:
     """Main menu: token / renew / api health / cv license / menthorq / links.
-    The admin gets an extra row: create MenthorQ tokens (mq_...)."""
+    The admin gets an extra row: create MenthorQ tokens (mq_...) and manage tokens."""
     rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
-             InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")],
-            [InlineKeyboardButton("🩺 API Health", callback_data="menu_health"),
-             InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv")],
-            [InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
+             InlineKeyboardButton("⭐ Get Premium", callback_data="menu_premium")],
+            [InlineKeyboardButton("♻️ Renew (Free)", callback_data="menu_renew"),
+             InlineKeyboardButton("🩺 API Health", callback_data="menu_health")],
+            [InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv"),
+             InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
     if admin:
-        rows.append([InlineKeyboardButton("🔐 Create MQ Token",
-                                          callback_data="mqt_menu"),
-                     InlineKeyboardButton("📢 Broadcast",
-                                          callback_data="bcast_menu")])
+        rows.append([InlineKeyboardButton("👑 Manage Tokens", callback_data="adm_tokens:0:all"),
+                     InlineKeyboardButton("🔐 Create MQ Token", callback_data="mqt_menu")])
+        rows.append([InlineKeyboardButton("📢 Broadcast", callback_data="bcast_menu")])
     links = await _links_row(context)
     if links:
         rows.append(links)
     return InlineKeyboardMarkup(rows)
 
 
-async def _token_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
-    """Under an active token card: renew (enabled at expiry) + links."""
-    rows = [[InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")]]
+async def _token_keyboard(context: ContextTypes.DEFAULT_TYPE,
+                          is_premium: bool = False) -> InlineKeyboardMarkup:
+    """Under an active token card: renew (enabled at expiry) / upgrade + links."""
+    rows = []
+    if is_premium:
+        rows.append([InlineKeyboardButton("⭐ Premium Active (Indefinite)", callback_data="menu_token")])
+    else:
+        rows.append([InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="menu_premium"),
+                     InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")])
+    rows.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")])
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -152,7 +203,9 @@ async def _token_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardM
 _WELCOME = (
     "<b>👋 Welcome to QTapi</b>\n\n"
     "Real-time options Gamma Exposure (GEX) & orderflow data for "
-    "<b>SPX, SPY, NDX and QQQ</b>, refreshed every ~2 seconds.\n\n"
+    "<b>SPX, SPY, NDX, QQQ, GLD, and VIX</b>, refreshed every ~2 seconds.\n\n"
+    "• <b>Free Access:</b> SPX, SPY, NDX, QQQ (7-day renewable)\n"
+    "• <b>⭐ Premium Access:</b> SPX, SPY, NDX, QQQ, GLD, VIX (Permanent / No expiry)\n\n"
     "Use the menu below to manage your API access.\n"
     "📖 The full API documentation is pinned in our Telegram group."
 )
@@ -160,10 +213,14 @@ _WELCOME = (
 _HELP = (
     "<b>📚 QTapi — Help</b>\n\n"
     "QTapi provides real-time options Gamma Exposure (GEX) and orderflow data "
-    "for <b>SPX, SPY, NDX and QQQ</b>, refreshed every ~2 seconds.\n\n"
+    "refreshed every ~2 seconds.\n\n"
+    "<b>Tiers & Access:</b>\n"
+    "• <b>🆓 Free Tier:</b> SPX, SPY, NDX, QQQ (Futures: ES, NQ). Valid 7 days.\n"
+    "• <b>⭐ Premium Tier:</b> All Free instruments + <b>GLD, VIX</b> (Futures: GC, VX). Permanent validity, reserved for members of group -1003822153102.\n\n"
     "<b>Commands</b>\n"
     "/mytoken — show your current API token\n"
-    "/renew — get a fresh token (available once your token expires)\n"
+    "/premium — request or view your Premium token\n"
+    "/renew — get a fresh Free token (available once expired)\n"
     "/help — show this message\n\n"
     "<b>Using your token</b>\n"
     "Append <code>?token=YOUR_TOKEN</code> to any endpoint.\n\n"
@@ -172,15 +229,25 @@ _HELP = (
 )
 
 _JOIN = (
-    "<b>🔒 Members only</b>\n\n"
-    "API access is free, but reserved for members of our Telegram group.\n\n"
+    "<b>🔒 Free Members only</b>\n\n"
+    "API access is reserved for members of our Telegram group.\n\n"
     "1️⃣ Tap <b>Join the group</b>\n"
     "2️⃣ Come back here and tap <b>Verify membership</b>"
 )
 
+_PREMIUM_JOIN = (
+    "<b>⭐ QTapi — Premium Access</b>\n\n"
+    "Premium tokens unlock access to <b>GLD, VIX, SPX, SPY, NDX, QQQ</b> "
+    "(and futures <b>ES, NQ, GC, VX</b>) with <b>permanent validity (no expiration)</b>.\n\n"
+    "To activate a Premium token, you must be a member of our Premium group:\n"
+    f"<b>Group ID:</b> <code>{config.TELEGRAM_PREMIUM_GROUP_ID}</code>\n\n"
+    "1️⃣ Join the Premium group\n"
+    "2️⃣ Tap <b>Verify Premium Membership</b> below"
+)
+
 _REVOKED = (
     "<b>🚫 Access suspended</b>\n\n"
-    "Your token was revoked. Please contact the group admins if you believe "
+    "Your token was revoked. Please contact the admins if you believe "
     "this is a mistake."
 )
 
@@ -192,16 +259,36 @@ _PRIVATE_ONLY = (
 
 def _token_msg(token: str, rec: dict) -> str:
     base = config.PUBLIC_BASE_URL.rstrip("/")
+    tier = rec.get("tier", "free")
+    if tier == "premium":
+        return (
+            "<b>⭐ QTapi — Premium API Token</b>\n\n"
+            "Status: <b>✅ Active</b>\n"
+            "Tier: <b>⭐ Premium</b>\n"
+            "Expiration: <b>Permanent / No Expiration</b>\n\n"
+            f"<code>{token}</code>\n\n"
+            "<b>Included Instruments:</b>\n"
+            "• Indices & ETFs: <b>SPX, SPY, NDX, QQQ</b> (Futures: ES, NQ)\n"
+            "• Commodities & Volatility: <b>GLD, VIX</b> (Futures: GC, VX)\n\n"
+            "<b>Quick start:</b>\n"
+            f"<code>{base}/api/spx/classic/zero?token={token}</code>\n"
+            f"<code>{base}/api/gld/classic/zero?token={token}</code>\n"
+            f"<code>{base}/api/vix/classic/zero?token={token}</code>\n\n"
+            "<i>Keep this token private — it is tied to your account.</i>"
+        )
     return (
-        "<b>🔑 QTapi — API Access Token</b>\n\n"
+        "<b>🔑 QTapi — Free API Token</b>\n\n"
         "Status: <b>✅ Active</b>\n"
-        f"Valid until: <b>{tokens.fmt_exp(rec)}</b>\n\n"
+        "Tier: <b>🆓 Free</b>\n"
+        f"Valid until: <b>{tokens.fmt_exp(rec)}</b> (7 days)\n\n"
         f"<code>{token}</code>\n\n"
-        "<b>Quick start</b>\n"
-        "Append <code>?token=YOUR_TOKEN</code> to any endpoint, e.g.:\n"
+        "<b>Included Instruments:</b>\n"
+        "• Standard: <b>SPX, SPY, NDX, QQQ</b> (Futures: ES, NQ)\n"
+        "<i>(GLD and VIX require a ⭐ Premium token)</i>\n\n"
+        "<b>Quick start:</b>\n"
         f"<code>{base}/api/spx/classic/zero?token={token}</code>\n\n"
         "📖 The full API documentation is pinned in our Telegram group.\n\n"
-        "<i>Keep this token private — it is tied to your account.</i>"
+        "<i>Keep this token private. Renew when expired.</i>"
     )
 
 
@@ -221,50 +308,83 @@ def _renew_wait_msg(rec: dict) -> str:
     return (
         "<b>⏳ Renewal not available yet</b>\n\n"
         f"Your current token is still valid until <b>{tokens.fmt_exp(rec)}</b>.\n"
-        "You can request a fresh token once it expires, or within its last "
-        "24 hours."
+        "You can request a fresh token once it expires, or within its last 24 hours."
     )
 
 
 # --------------------------------------------------------------------------- #
 # shared payloads (used by both the commands and the menu buttons)
 # --------------------------------------------------------------------------- #
+async def _premium_payload(context, user):
+    """Issue or display a Premium token for members of the premium group."""
+    if not await _is_premium_member(context, user.id):
+        return _PREMIUM_JOIN, await _premium_join_keyboard(context)
+    
+    token, rec = tokens.create_or_get(
+        user.id, user.username or user.full_name, tier="premium")
+    msg = (
+        "🎉 <b>Congratulations! Premium Membership Verified.</b>\n\n"
+        + _token_msg(token, rec)
+    )
+    return msg, await _token_keyboard(context, is_premium=True)
+
+
 async def _mytoken_payload(context, user):
     """Show the current token; issue the first one to a new member."""
+    # If user is in premium group, give them premium!
+    if await _is_premium_member(context, user.id):
+        token, rec = tokens.create_or_get(
+            user.id, user.username or user.full_name, tier="premium")
+        return _token_msg(token, rec), await _token_keyboard(context, is_premium=True)
+
     if not await _is_member(context, user.id):
         return _JOIN, await _join_keyboard(context)
+    
     rec = tokens.get_user(user.id)
     if rec:
-        return _token_msg(rec["token"], rec), await _token_keyboard(context)
+        is_prem = rec.get("tier") == "premium"
+        return _token_msg(rec["token"], rec), await _token_keyboard(context, is_premium=is_prem)
+    
     last = tokens.get_user_any(user.id)
     if last and last.get("revoked"):
         return _REVOKED, None
     if last:  # had one, now expired -> invite to renew
         return _expired_msg(last), InlineKeyboardMarkup(
-            [[InlineKeyboardButton("♻️ Renew now", callback_data="menu_renew")]])
-    # brand-new member -> issue the first token
+            [[InlineKeyboardButton("♻️ Renew now", callback_data="menu_renew")],
+             [InlineKeyboardButton("⭐ Get Premium", callback_data="menu_premium")]])
+    
+    # brand-new member -> issue free token
     token, rec = tokens.create_or_get(
-        user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS)
-    return _token_msg(token, rec), await _token_keyboard(context)
+        user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS, tier="free")
+    return _token_msg(token, rec), await _token_keyboard(context, is_premium=False)
 
 
 async def _renew_payload(context, user):
-    """Renew once the token has expired (or within its last 24 hours)."""
+    """Renew once the free token has expired (or within its last 24 hours)."""
+    rec = tokens.get_user(user.id)
+    if rec and rec.get("tier") == "premium":
+        return ("<b>⭐ Premium Token Active</b>\n\n"
+                "Your Premium token is permanent and does not expire!\n"
+                "You do not need to renew it."), await _token_keyboard(context, is_premium=True)
+
     if not await _is_member(context, user.id):
         return _JOIN, await _join_keyboard(context)
-    rec = tokens.get_user(user.id)
-    if rec:  # still valid -> refuse unless within the renewal window
+    
+    if rec:
         remaining = (rec.get("expires_at") or 0) - int(time.time())
         if remaining > _RENEW_WINDOW_SEC:
             return _renew_wait_msg(rec), InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token")]])
+                [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token")],
+                 [InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="menu_premium")]])
+    
     last = tokens.get_user_any(user.id)
     if last and last.get("revoked"):
         return _REVOKED, None
+    
     token, rec = tokens.renew(
-        user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS)
+        user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS, tier="free")
     msg = _renewed_msg(token, rec) if last else _token_msg(token, rec)
-    return msg, await _token_keyboard(context)
+    return msg, await _token_keyboard(context, is_premium=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -313,6 +433,14 @@ async def cmd_renew(update: Update, context):
         await update.message.reply_text(_PRIVATE_ONLY, parse_mode="HTML")
         return
     text, markup = await _renew_payload(context, update.effective_user)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def cmd_premium(update: Update, context):
+    if update.effective_chat.type != ChatType.PRIVATE:
+        await update.message.reply_text(_PRIVATE_ONLY, parse_mode="HTML")
+        return
+    text, markup = await _premium_payload(context, update.effective_user)
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
 
 
@@ -490,7 +618,11 @@ async def cb_menu(update: Update, context):
             "I'll forward it to the admin for approval.",
             parse_mode="HTML")
         return
-    if q.data == "menu_health":
+    if q.data == "menu_start":
+        text, markup = _WELCOME, await _menu_keyboard(context, _is_admin(user.id))
+    elif q.data == "menu_premium":
+        text, markup = await _premium_payload(context, user)
+    elif q.data == "menu_health":
         text, markup = await _health_text(), await _menu_keyboard(context, _is_admin(user.id))
     elif q.data in ("menu_mq", "mq_back") or q.data.startswith("mq_"):
         # MenthorQ levels: free of charge, but GROUP MEMBERS ONLY
@@ -623,6 +755,27 @@ async def cb_check_entry(update: Update, context):
             show_alert=True)
 
 
+async def cb_verify_premium(update: Update, context):
+    """Handles the '✅ Verify Premium Membership' button."""
+    q = update.callback_query
+    msg_chat = getattr(getattr(q, "message", None), "chat", None)
+    if msg_chat is not None and msg_chat.type != ChatType.PRIVATE:
+        await q.answer("Please use me in a private chat.", show_alert=True)
+        return
+    user = q.from_user
+    if await _is_premium_member(context, user.id):
+        await q.answer("⭐ Premium membership verified!")
+        text, markup = await _premium_payload(context, user)
+        try:
+            await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            await q.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+    else:
+        await q.answer(
+            f"❌ You are not a member of group {config.TELEGRAM_PREMIUM_GROUP_ID} yet. Join it first!",
+            show_alert=True)
+
+
 # --------------------------------------------------------------------------- #
 # admin commands (hidden from the menu)
 # --------------------------------------------------------------------------- #
@@ -691,6 +844,166 @@ async def cmd_revokeuser(update: Update, context):
         return
     n = tokens.revoke_user(tid)
     await update.message.reply_text(f"Revoked {n} token(s) for {tid}.")
+
+
+def _admin_tokens_view(page: int = 0, filter_type: str = "all") -> tuple:
+    tier_filter = "premium" if filter_type == "prem" else ("free" if filter_type == "free" else None)
+    all_items = tokens.list_all(tier_filter=tier_filter)
+    
+    PAGE_SIZE = 5
+    total = len(all_items)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    
+    current_items = all_items[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+    
+    filter_labels = {"all": "All Tokens", "prem": "⭐ Premium Only", "free": "🆓 Free Only"}
+    header = (
+        "<b>👑 QTapi — Token Management (Admin)</b>\n\n"
+        f"Filter: <b>{filter_labels.get(filter_type, filter_type)}</b> | Total: <b>{total}</b>\n"
+        f"Page: <b>{page + 1} / {total_pages}</b>\n"
+        "────────────────────────\n"
+    )
+    
+    lines = []
+    revoke_buttons = []
+    
+    if not current_items:
+        lines.append("<i>No tokens found in this category.</i>")
+    else:
+        for idx, (tok, rec) in enumerate(current_items, start=page * PAGE_SIZE + 1):
+            is_rev = rec.get("revoked", False)
+            st_badge = "🚫 REVOKED" if is_rev else "✅ Active"
+            exp_txt = tokens.fmt_exp(rec)
+            tier_badge = tokens.fmt_tier(rec)
+            u_name = f"@{rec.get('username')}" if rec.get('username') else f"ID:{rec.get('telegram_id')}"
+            
+            lines.append(
+                f"<b>{idx}. {u_name}</b> (<code>{rec.get('telegram_id')}</code>)\n"
+                f"   Tier: <b>{tier_badge}</b> · Status: <b>{st_badge}</b>\n"
+                f"   Exp: <code>{exp_txt}</code>\n"
+                f"   Token: <code>{tok[:16]}...</code>\n"
+            )
+            
+            if not is_rev:
+                revoke_buttons.append(
+                    InlineKeyboardButton(f"❌ Revoke #{idx} ({u_name[:12]})",
+                                         callback_data=f"adm_r:{tok}:{page}:{filter_type}")
+                )
+            else:
+                revoke_buttons.append(
+                    InlineKeyboardButton(f"✅ Restore #{idx} ({u_name[:12]})",
+                                         callback_data=f"adm_u:{tok}:{page}:{filter_type}")
+                )
+
+    body = header + "\n".join(lines)
+    
+    kb_rows = []
+    for btn in revoke_buttons:
+        kb_rows.append([btn])
+    
+    filter_row = [
+        InlineKeyboardButton("⭐ Premium" if filter_type != "prem" else "• ⭐ Prem •",
+                             callback_data=f"adm_tokens:0:prem"),
+        InlineKeyboardButton("🆓 Free" if filter_type != "free" else "• 🆓 Free •",
+                             callback_data=f"adm_tokens:0:free"),
+        InlineKeyboardButton("📋 All" if filter_type != "all" else "• 📋 All •",
+                             callback_data=f"adm_tokens:0:all"),
+    ]
+    kb_rows.append(filter_row)
+    
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"adm_tokens:{page-1}:{filter_type}"))
+    nav_row.append(InlineKeyboardButton(f"🔄 {page+1}/{total_pages}", callback_data=f"adm_tokens:{page}:{filter_type}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"adm_tokens:{page+1}:{filter_type}"))
+    kb_rows.append(nav_row)
+    
+    kb_rows.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")])
+    
+    return body, InlineKeyboardMarkup(kb_rows)
+
+
+async def cmd_admin_tokens(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    text, markup = _admin_tokens_view(0, "all")
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def cb_admin_tokens(update: Update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("Admin only.", show_alert=True)
+        return
+    parts = q.data.split(":")
+    page = int(parts[1]) if len(parts) > 1 else 0
+    ft = parts[2] if len(parts) > 2 else "all"
+    text, markup = _admin_tokens_view(page, ft)
+    await q.answer()
+    try:
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        pass
+
+
+async def cb_admin_revoke(update: Update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("Admin only.", show_alert=True)
+        return
+    parts = q.data.split(":")
+    tok = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
+    ft = parts[3] if len(parts) > 3 else "all"
+    ok = tokens.revoke_token(tok)
+    await q.answer("Token revoked! 🚫" if ok else "Token not found.", show_alert=False)
+    text, markup = _admin_tokens_view(page, ft)
+    try:
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        pass
+
+
+async def cb_admin_unrevoke(update: Update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("Admin only.", show_alert=True)
+        return
+    parts = q.data.split(":")
+    tok = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
+    ft = parts[3] if len(parts) > 3 else "all"
+    data = tokens._load_raw()
+    if tok in data.get("tokens", {}):
+        data["tokens"][tok]["revoked"] = False
+        tokens._save(data)
+        await q.answer("Token restored! ✅", show_alert=False)
+    else:
+        await q.answer("Token not found.", show_alert=True)
+    text, markup = _admin_tokens_view(page, ft)
+    try:
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        pass
+
+
+async def cmd_grantprem(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /grantprem <telegram_id>")
+        return
+    try:
+        tid = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid telegram ID.")
+        return
+    token, rec = tokens.grant_premium(tid, "granted")
+    await update.message.reply_text(
+        f"⭐ <b>Premium token granted</b> to <code>{tid}</code> (Permanent / No Expiry):\n"
+        f"<code>{token}</code>", parse_mode="HTML")
 
 
 # --------------------------------------------------------------------------- #
@@ -989,10 +1302,11 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _post_init(app: Application):
-    """Publish the 3 user commands in Telegram's menu (the '/' button)."""
+    """Publish the user commands in Telegram's menu (the '/' button)."""
     await app.bot.set_my_commands([
         BotCommand("mytoken", "Show your current API token"),
-        BotCommand("renew", "Get a fresh token (after expiry)"),
+        BotCommand("premium", "Get or show your Premium token"),
+        BotCommand("renew", "Get a fresh Free token (after expiry)"),
         BotCommand("help", "How to use QTapi"),
     ])
 
@@ -1009,8 +1323,12 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("mytoken", cmd_mytoken))
+    app.add_handler(CommandHandler("premium", cmd_premium))
     app.add_handler(CommandHandler("renew", cmd_renew))
     app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("tokens", cmd_admin_tokens))
+    app.add_handler(CommandHandler("admin", cmd_admin_tokens))
+    app.add_handler(CommandHandler("grantprem", cmd_grantprem))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("grant", cmd_grant))
     app.add_handler(CommandHandler("revoke", cmd_revoke))
@@ -1025,9 +1343,13 @@ def main():
     app.add_handler(CommandHandler("unwarn", cmd_unwarn))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|renew|health|cv|mq)$"))
+    app.add_handler(CallbackQueryHandler(cb_verify_premium, pattern="^verify_premium$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|health|cv|mq|start)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
+    app.add_handler(CallbackQueryHandler(cb_admin_tokens, pattern=r"^adm_tokens:\d+:(all|prem|free)$"))
+    app.add_handler(CallbackQueryHandler(cb_admin_revoke, pattern=r"^adm_r:[\w\-]+:\d+:(all|prem|free)$"))
+    app.add_handler(CallbackQueryHandler(cb_admin_unrevoke, pattern=r"^adm_u:[\w\-]+:\d+:(all|prem|free)$"))
     app.add_handler(CallbackQueryHandler(cb_cv_decide, pattern="^cv_(ok|no):"))
     app.add_handler(CallbackQueryHandler(cb_broadcast, pattern="^bcast_(menu|renew|cancel)$"))
     app.add_handler(MessageHandler(
@@ -1038,8 +1360,9 @@ def main():
                                    track_subscriber), group=1)
     app.add_error_handler(on_error)
 
-    log.info("QTapi bot starting (admin=%s, group=%s)...",
-             config.TELEGRAM_ADMIN_ID, config.TELEGRAM_GROUP_ID)
+    log.info("QTapi bot starting (admin=%s, group=%s, premium_group=%s)...",
+             config.TELEGRAM_ADMIN_ID, config.TELEGRAM_GROUP_ID,
+             config.TELEGRAM_PREMIUM_GROUP_ID)
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 

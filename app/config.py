@@ -30,7 +30,7 @@ DEFAULT_PERIOD = os.getenv("DEFAULT_PERIOD", "zero")
 # ---------------------------------------------------------------------------
 POLL_ENABLED = os.getenv("POLL_ENABLED", "1") == "1"
 POLLED_TICKERS = [t.strip().upper()
-                  for t in os.getenv("POLLED_TICKERS", "SPX,SPY,NDX,QQQ").split(",")
+                  for t in os.getenv("POLLED_TICKERS", "SPX,SPY,NDX,QQQ,GLD,VIX").split(",")
                   if t.strip()]
 POLL_PERIODS = [p.strip()
                 for p in os.getenv("POLL_PERIODS", "zero,full,one").split(",")
@@ -43,6 +43,14 @@ GREEKS = [g.strip() for g in os.getenv("GREEKS", "delta,gamma,vanna,charm").spli
           if g.strip()]
 GREEK_PERIODS = [p.strip() for p in os.getenv("GREEK_PERIODS", "zero,one").split(",")
                  if p.strip()]
+
+# Tiers: free instruments vs premium instruments
+FREE_TICKERS = {t.strip().upper()
+                for t in os.getenv("FREE_TICKERS", "SPX,SPY,NDX,QQQ").split(",")
+                if t.strip()}
+PREMIUM_TICKERS = {t.strip().upper()
+                   for t in os.getenv("PREMIUM_TICKERS", "GLD,VIX").split(",")
+                   if t.strip()}
 
 # ---------------------------------------------------------------------------
 # US market hours (New York time, DST handled automatically)
@@ -69,6 +77,19 @@ FUTURES_MAP = {
     "DIA": "YM",
     "GLD": "GC",
     "USO": "CL",
+    "VIX": "VX",
+}
+
+# Instrument aliases for convenience (e.g. ATAS indicators pass ES_SPX or NQ_NDX)
+TICKER_ALIASES = {
+    "ES_SPX": ("SPX", "ES"),
+    "ES": ("SPX", "ES"),
+    "NQ_NDX": ("NDX", "NQ"),
+    "NQ": ("NDX", "NQ"),
+    "GC_GLD": ("GLD", "GC"),
+    "GC": ("GLD", "GC"),
+    "VX_VIX": ("VIX", "VX"),
+    "VX": ("VIX", "VX"),
 }
 
 # ---------------------------------------------------------------------------
@@ -128,9 +149,11 @@ TOKEN_VALID_DAYS = int(os.getenv("TOKEN_VALID_DAYS", "7"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_ADMIN_ID = int(os.getenv("TELEGRAM_ADMIN_ID", "0") or 0)
 TELEGRAM_GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0") or 0)
+TELEGRAM_PREMIUM_GROUP_ID = int(os.getenv("TELEGRAM_PREMIUM_GROUP_ID", "-1003822153102") or -1003822153102)
 # Public invite link shown on the "Join" button. If empty, the bot tries to
 # fetch/create one automatically (needs the bot to be group admin).
 TELEGRAM_GROUP_LINK = os.getenv("TELEGRAM_GROUP_LINK", "").strip()
+TELEGRAM_PREMIUM_GROUP_LINK = os.getenv("TELEGRAM_PREMIUM_GROUP_LINK", "").strip()
 # Public channel shown as a "Main Channel" button in the bot menus.
 TELEGRAM_CHANNEL_LINK = os.getenv("TELEGRAM_CHANNEL_LINK", "").strip()
 
