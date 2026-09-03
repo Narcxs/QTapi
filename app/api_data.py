@@ -36,14 +36,26 @@ _OLD_PACKAGES = _PACKAGES + _GREEKS          # old model: greek was a package
 _CACHE_HEADERS = {"Cache-Control": f"public, max-age={max(1, int(config.POLL_INTERVAL))}"}
 
 
-def _auth_ok(token: str, ticker: str = "", future: bool = False) -> tuple:
+def _get_client_ip(request: Request) -> str:
+    if not request:
+        return ""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else ""
+
+
+def _auth_ok(token: str, ticker: str = "", future: bool = False, client_ip: str = "") -> tuple:
     # Returns (is_ok: bool, reason: str)
     if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
         return True, "OK"
     fut_str = ""
     if future and ticker:
         fut_str = config.FUTURES_MAP.get(ticker.upper(), "")
-    v = tokens.validate(token, ticker=ticker, future=fut_str)
+    v = tokens.validate(token, ticker=ticker, future=fut_str, client_ip=client_ip)
 
     # Premium tickers ALWAYS require a premium token (even if REQUIRE_TOKEN=0 for free ones)
     is_prem = (ticker and ticker.upper() in config.PREMIUM_TICKERS) or (fut_str in {"GC", "VX"})
@@ -65,6 +77,11 @@ def _deny(reason: str = "UNAUTHORIZED"):
         return JSONResponse(
             {"error": "premium_required",
              "hint": "GLD and VIX require a Premium token. Join group -1003822153102 to get one."},
+            403)
+    if reason == "IP_MISMATCH":
+        return JSONResponse(
+            {"error": "ip_mismatch",
+             "hint": "This free token is restricted to a single IP address and is already bound to another IP."},
             403)
     return JSONResponse(
         {"error": "unauthorized",
@@ -138,7 +155,8 @@ def _serve_new(ticker: str, package: str, category: str, raw: bool, future: bool
 @router.get("")
 @router.get("/")
 async def index(request: Request, token: str = Query("")):
-    ok, reason = _auth_ok(token)
+    ip = _get_client_ip(request)
+    ok, reason = _auth_ok(token, client_ip=ip)
     if not ok:
         return _deny(reason)
     base = str(request.base_url).rstrip("/")
@@ -185,9 +203,10 @@ async def index(request: Request, token: str = Query("")):
 
 
 @router.get("/tickers")
-async def tickers(token: str = Query("")):
+async def tickers(request: Request, token: str = Query("")):
     """Mirror of the official GET /tickers (limited to what we poll)."""
-    ok, reason = _auth_ok(token)
+    ip = _get_client_ip(request)
+    ok, reason = _auth_ok(token, client_ip=ip)
     if not ok:
         return _deny(reason)
     polled = set(config.POLLED_TICKERS)
@@ -209,14 +228,15 @@ async def tickers(token: str = Query("")):
 
 
 @router.get("/{a}/{b}")
-async def two_segments(a: str, b: str,
+async def two_segments(request: Request, a: str, b: str,
                        token: str = Query(""), raw: bool = Query(False),
                        future: bool = Query(False)):
     al, bl = a.lower(), b.lower()
+    ip = _get_client_ip(request)
 
     # official GET /{package}/categories (category names carry the gex_ prefix)
     if al in _PACKAGES and bl == "categories":
-        ok, reason = _auth_ok(token)
+        ok, reason = _auth_ok(token, client_ip=ip)
         if not ok:
             return _deny(reason)
         if al == "orderflow":
@@ -229,7 +249,7 @@ async def two_segments(a: str, b: str,
 
     # old model: /api/{package}/{instrument} (orderflow or DEFAULT_PERIOD)
     if al in _OLD_PACKAGES:
-        ok, reason = _auth_ok(token, ticker=b, future=future)
+        ok, reason = _auth_ok(token, ticker=b, future=future, client_ip=ip)
         if not ok:
             return _deny(reason)
         period = None if al == "orderflow" else config.DEFAULT_PERIOD
@@ -237,7 +257,7 @@ async def two_segments(a: str, b: str,
 
     # new model alias: /api/{ticker}/orderflow
     if bl == "orderflow":
-        ok, reason = _auth_ok(token, ticker=a, future=future)
+        ok, reason = _auth_ok(token, ticker=a, future=future, client_ip=ip)
         if not ok:
             return _deny(reason)
         return _serve("orderflow", a, None, raw, future)
@@ -247,17 +267,18 @@ async def two_segments(a: str, b: str,
 
 
 @router.get("/{a}/{b}/{c}")
-async def three_segments(a: str, b: str, c: str,
+async def three_segments(request: Request, a: str, b: str, c: str,
                          token: str = Query(""), raw: bool = Query(False),
                          future: bool = Query(False)):
+    ip = _get_client_ip(request)
     # old model: /api/{package}/{instrument}/{period}
     if a.lower() in _OLD_PACKAGES:
-        ok, reason = _auth_ok(token, ticker=b, future=future)
+        ok, reason = _auth_ok(token, ticker=b, future=future, client_ip=ip)
         if not ok:
             return _deny(reason)
         return _serve(a, b, c, raw, future)
     # new (official) model: /api/{ticker}/{package}/{category}
-    ok, reason = _auth_ok(token, ticker=a, future=future)
+    ok, reason = _auth_ok(token, ticker=a, future=future, client_ip=ip)
     if not ok:
         return _deny(reason)
     return _serve_new(a, b, c, raw, future)

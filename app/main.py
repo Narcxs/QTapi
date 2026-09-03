@@ -162,14 +162,27 @@ async def data_file(ticker: str = Query(...),
 
 
 # --------------------------------------------------------------------------- #
+def _get_client_ip(request: Request) -> str:
+    if not request:
+        return ""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else ""
+
+
+# --------------------------------------------------------------------------- #
 # indicator feeds auth: per-user token (REQUIRE_TOKEN=1) or legacy license key
 # --------------------------------------------------------------------------- #
-async def _feed_auth(key: str, token: str, ticker: str = "", future: str = ""):
+async def _feed_auth(key: str, token: str, ticker: str = "", future: str = "", client_ip: str = ""):
     """Return (ok, expiry_text, reason). Denial is expressed as ok=False."""
     if config.DATA_API_TOKEN and token == config.DATA_API_TOKEN:
         return True, "MASTER", "OK"
 
-    v = tokens.validate(token, ticker=ticker, future=future)
+    v = tokens.validate(token, ticker=ticker, future=future, client_ip=client_ip)
     fut_str = (future or "").strip().upper()
     is_prem = (ticker and ticker.strip().upper() in config.PREMIUM_TICKERS) or (fut_str in {"GC", "VX"})
 
@@ -202,7 +215,7 @@ _GREEK_SYMBOLS = {"delta": "Δ", "gamma": "γ", "vanna": "ν", "charm": "χ"}
 
 
 @app.get("/overlay", response_class=PlainTextResponse)
-async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
+async def overlay(request: Request, ticker: str = Query("SPX"), key: str = Query(""),
                   period: str = Query(None), future: str = Query(""),
                   token: str = Query(""), greek: str = Query("gamma")):
     t_up = (ticker or "SPX").strip().upper()
@@ -211,11 +224,14 @@ async def overlay(ticker: str = Query("SPX"), key: str = Query(""),
         if not future:
             future = auto_fut
 
-    ok, exp_txt, reason = await _feed_auth(key, token, ticker=ticker, future=future)
+    ip = _get_client_ip(request)
+    ok, exp_txt, reason = await _feed_auth(key, token, ticker=ticker, future=future, client_ip=ip)
     if not ok:
         if reason == "PREMIUM_REQUIRED":
             return ("STATUS=DENIED|PREMIUM_REQUIRED - GLD and VIX require a Premium token "
                     f"(join group {config.TELEGRAM_PREMIUM_GROUP_ID})")
+        if reason == "IP_MISMATCH":
+            return ("STATUS=DENIED|IP_MISMATCH - This free token is locked to another IP address.")
         return ("STATUS=DENIED|UNAUTHORIZED - get your token "
                 "from our Telegram bot")
 
@@ -350,13 +366,16 @@ _MQ_TAGS = (("gamma_levels", "GAMMA"),
 
 
 @app.get("/menthorq/levels", response_class=PlainTextResponse)
-async def menthorq_levels(ticker: str = Query("ES"), token: str = Query("")):
+async def menthorq_levels(request: Request, ticker: str = Query("ES"), token: str = Query("")):
     """Pipe-delimited MenthorQ levels for the indicator.
-    Auth: mq_ token (created by the admin via the Telegram bot)."""
-    v = mq_tokens.validate(token)
+    Auth: mq_ token (created by the admin via the Telegram bot or 14-day trial)."""
+    ip = _get_client_ip(request)
+    v = mq_tokens.validate(token, client_ip=ip)
     if not v.get("ok"):
+        if v.get("reason") == "IP_MISMATCH":
+            return ("STATUS=DENIED|IP_MISMATCH - This trial token is locked to another IP address.")
         return ("STATUS=DENIED|UNAUTHORIZED - get your MenthorQ token "
-                "from the admin")
+                "from the admin or Telegram bot")
 
     rec = menthorq.get_levels().get(ticker.upper())
     if rec is None:
@@ -391,7 +410,7 @@ _OF_METRICS = [
 
 
 @app.get("/orderflow", response_class=PlainTextResponse)
-async def orderflow(ticker: str = Query("SPX"), key: str = Query(""),
+async def orderflow(request: Request, ticker: str = Query("SPX"), key: str = Query(""),
                     future: str = Query(""), token: str = Query("")):
     t_up = (ticker or "SPX").strip().upper()
     if t_up in config.TICKER_ALIASES:
@@ -399,11 +418,14 @@ async def orderflow(ticker: str = Query("SPX"), key: str = Query(""),
         if not future:
             future = auto_fut
 
-    ok, exp_txt, reason = await _feed_auth(key, token, ticker=ticker, future=future)
+    ip = _get_client_ip(request)
+    ok, exp_txt, reason = await _feed_auth(key, token, ticker=ticker, future=future, client_ip=ip)
     if not ok:
         if reason == "PREMIUM_REQUIRED":
             return ("STATUS=DENIED|PREMIUM_REQUIRED - GLD and VIX require a Premium token "
                     f"(join group {config.TELEGRAM_PREMIUM_GROUP_ID})")
+        if reason == "IP_MISMATCH":
+            return ("STATUS=DENIED|IP_MISMATCH - This free token is locked to another IP address.")
         return ("STATUS=DENIED|UNAUTHORIZED - get your token "
                 "from our Telegram bot")
 

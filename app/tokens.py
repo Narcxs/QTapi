@@ -72,7 +72,7 @@ def _save(data: dict) -> None:
 # --------------------------------------------------------------------------- #
 # read (used by the API)
 # --------------------------------------------------------------------------- #
-def validate(token: str, ticker: str = None, future: str = None) -> dict:
+def validate(token: str, ticker: str = None, future: str = None, client_ip: str = None) -> dict:
     if not token:
         return {"ok": False, "reason": "NO_TOKEN"}
     rec = _load_cached().get("tokens", {}).get(token)
@@ -86,6 +86,22 @@ def validate(token: str, ticker: str = None, future: str = None) -> dict:
     
     tier = rec.get("tier", "free")
     
+    # 1-IP Lock for free tokens
+    if tier == "free" and client_ip:
+        bound_ip = rec.get("bound_ip")
+        if not bound_ip:
+            # Bind to first calling IP
+            with _lock:
+                data = _load_raw()
+                if token in data.get("tokens", {}):
+                    if not data["tokens"][token].get("bound_ip"):
+                        data["tokens"][token]["bound_ip"] = client_ip
+                        _save(data)
+                        rec["bound_ip"] = client_ip
+        elif bound_ip != client_ip:
+            return {"ok": False, "reason": "IP_MISMATCH", "tier": tier,
+                    "expires_at": exp, "telegram_id": rec.get("telegram_id")}
+
     # Resolve aliases (e.g. ES_SPX -> SPX, GC_GLD -> GLD)
     if ticker:
         t_up = ticker.strip().upper()

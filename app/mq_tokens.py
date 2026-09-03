@@ -78,7 +78,7 @@ def _active(rec: dict) -> bool:
 # --------------------------------------------------------------------------- #
 # read (used by the API)
 # --------------------------------------------------------------------------- #
-def validate(token: str) -> dict:
+def validate(token: str, client_ip: str = None) -> dict:
     if not token:
         return {"ok": False, "reason": "NO_TOKEN"}
     rec = _load_cached().get("tokens", {}).get(token)
@@ -89,6 +89,22 @@ def validate(token: str) -> dict:
     exp = rec.get("expires_at")
     if exp and _now() > exp:
         return {"ok": False, "reason": "EXPIRED"}
+
+    # 1-IP Lock for MenthorQ trial tokens (issued via telegram_id or labeled Trial)
+    is_trial = bool(rec.get("telegram_id") or str(rec.get("label", "")).startswith("Trial"))
+    if is_trial and client_ip:
+        bound_ip = rec.get("bound_ip")
+        if not bound_ip:
+            with _lock:
+                data = _load_raw()
+                if token in data.get("tokens", {}):
+                    if not data["tokens"][token].get("bound_ip"):
+                        data["tokens"][token]["bound_ip"] = client_ip
+                        _save(data)
+                        rec["bound_ip"] = client_ip
+        elif bound_ip != client_ip:
+            return {"ok": False, "reason": "IP_MISMATCH", "expires_at": exp}
+
     return {"ok": True, "reason": "OK", "expires_at": exp}
 
 
