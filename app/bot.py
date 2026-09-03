@@ -160,18 +160,19 @@ async def _links_row(context: ContextTypes.DEFAULT_TYPE):
 
 async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE,
                          admin: bool = False) -> InlineKeyboardMarkup:
-    """Main menu: token / renew / api health / cv license / menthorq / links.
-    The admin gets an extra row: create MenthorQ tokens (mq_...) and manage tokens."""
+    """Main menu: token / renew / cv license / menthorq / trial / links.
+    The admin gets an extra row: create MenthorQ tokens (mq_...), manage tokens and API health."""
     rows = [[InlineKeyboardButton("🔑 My Token", callback_data="menu_token"),
              InlineKeyboardButton("⭐ Get Premium", callback_data="menu_premium")],
             [InlineKeyboardButton("♻️ Renew (Free)", callback_data="menu_renew"),
-             InlineKeyboardButton("🩺 API Health", callback_data="menu_health")],
+             InlineKeyboardButton("🎁 Get trial MenthorQ Indicator", callback_data="menu_mq_trial")],
             [InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv"),
              InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
     if admin:
         rows.append([InlineKeyboardButton("👑 Manage Tokens", callback_data="adm_tokens:0:all"),
                      InlineKeyboardButton("🔐 Create MQ Token", callback_data="mqt_menu")])
-        rows.append([InlineKeyboardButton("📢 Broadcast", callback_data="bcast_menu")])
+        rows.append([InlineKeyboardButton("🩺 API Health", callback_data="menu_health"),
+                     InlineKeyboardButton("📢 Broadcast", callback_data="bcast_menu")])
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -382,6 +383,48 @@ async def _renew_payload(context, user):
         user.id, user.username or user.full_name, config.TOKEN_VALID_DAYS, tier="free")
     msg = _renewed_msg(token, rec) if last else _token_msg(token, rec)
     return msg, await _token_keyboard(context, is_premium=False)
+
+
+async def _mq_trial_payload(context, user):
+    """Deliver a 1-time 2-week trial token for the MenthorQ NinjaTrader indicator."""
+    if not await _is_member(context, user.id):
+        return _JOIN, await _join_keyboard(context)
+
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")]])
+    existing = mq_tokens.get_user_trial(user.id)
+    if existing:
+        if existing.get("revoked"):
+            return _REVOKED, back_kb
+        exp_txt = mq_tokens.fmt_exp(existing)
+        return (
+            "<b>🎁 MenthorQ Indicator — 2-Week Trial</b>\n\n"
+            "⚠️ <b>You have already claimed your 2-week trial!</b>\n"
+            "Trials are limited to 1 per member.\n\n"
+            f"Your trial token:\n<code>{existing['token']}</code>\n\n"
+            f"Valid until: <b>{exp_txt}</b>\n\n"
+            "<i>Paste this token into the MenthorQ indicator settings in NinjaTrader.</i>"
+        ), back_kb
+
+    # First time -> issue 14 days trial
+    token, rec = mq_tokens.create_trial(user.id, user.username or user.full_name, days=14)
+    if not token:
+        return (
+            "<b>🎁 MenthorQ Indicator — 2-Week Trial</b>\n\n"
+            "⚠️ <b>You have already claimed your trial token!</b>"
+        ), back_kb
+
+    exp_txt = mq_tokens.fmt_exp(rec)
+    return (
+        "<b>🎁 MenthorQ Indicator — 2-Week Trial Activated!</b>\n\n"
+        "Here is your 14-day trial token for the MenthorQ indicator:\n\n"
+        f"<code>{token}</code>\n\n"
+        f"Valid until: <b>{exp_txt}</b> (14 days)\n\n"
+        "<b>Instructions:</b>\n"
+        "1️⃣ Copy the token above\n"
+        "2️⃣ In NinjaTrader, open the MenthorQ Indicator settings\n"
+        "3️⃣ Paste the token in the <b>MQ Token</b> field\n\n"
+        "<i>Note: Trial tokens are single-use per member and cannot be renewed.</i>"
+    ), back_kb
 
 
 # --------------------------------------------------------------------------- #
@@ -619,7 +662,12 @@ async def cb_menu(update: Update, context):
         text, markup = _WELCOME, await _menu_keyboard(context, _is_admin(user.id))
     elif q.data == "menu_premium":
         text, markup = await _premium_payload(context, user)
+    elif q.data == "menu_mq_trial":
+        text, markup = await _mq_trial_payload(context, user)
     elif q.data == "menu_health":
+        if not _is_admin(user.id):
+            await q.answer("Admin only.", show_alert=True)
+            return
         text, markup = await _health_text(), await _menu_keyboard(context, _is_admin(user.id))
     elif q.data in ("menu_mq", "mq_back") or q.data.startswith("mq_"):
         # MenthorQ levels: free of charge, but GROUP MEMBERS ONLY
@@ -1341,7 +1389,7 @@ def main():
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_verify_premium, pattern="^verify_premium$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|health|cv|mq|start)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|health|cv|mq|mq_trial|start)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_tokens, pattern=r"^adm_tokens:\d+:(all|prem|free)$"))

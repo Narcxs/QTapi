@@ -93,9 +93,41 @@ def validate(token: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# write (used by the bot - admin only)
+# write (used by the bot)
 # --------------------------------------------------------------------------- #
-def create(days: int, label: str = ""):
+def get_user_trial(telegram_id: int):
+    """Return the user's existing trial token record (with 'token' key) or None."""
+    for t, rec in _load_cached().get("tokens", {}).items():
+        if rec.get("telegram_id") == telegram_id:
+            r = dict(rec)
+            r["token"] = t
+            return r
+    return None
+
+
+def create_trial(telegram_id: int, username: str, days: int = 14):
+    """Issue a 1-time trial token for a telegram user. If they already had one, return None."""
+    with _lock:
+        data = _load_raw()
+        toks = data["tokens"]
+        for t, rec in toks.items():
+            if rec.get("telegram_id") == telegram_id:
+                return None, rec
+        token = "mq_" + secrets.token_urlsafe(24)
+        rec = {
+            "telegram_id": telegram_id,
+            "username": username,
+            "created_at": _now(),
+            "expires_at": _now() + days * 86400,
+            "revoked": False,
+            "label": f"Trial (@{username})",
+        }
+        toks[token] = rec
+        _save(data)
+        return token, rec
+
+
+def create(days: int, label: str = "", telegram_id: int = None, username: str = None):
     """Issue a fresh mq_ token valid `days` days."""
     with _lock:
         data = _load_raw()
@@ -106,6 +138,10 @@ def create(days: int, label: str = ""):
             "revoked": False,
             "label": label,
         }
+        if telegram_id:
+            rec["telegram_id"] = telegram_id
+        if username:
+            rec["username"] = username
         data["tokens"][token] = rec
         _save(data)
         return token, rec
