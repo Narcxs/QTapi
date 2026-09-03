@@ -280,6 +280,8 @@ def _token_msg(token: str, rec: dict) -> str:
         "Tier: <b>🆓 Free</b>\n"
         f"Valid until: <b>{tokens.fmt_exp(rec)}</b> (7 days)\n\n"
         f"<code>{token}</code>\n\n"
+        "⚠️ <b>IP Restriction:</b>\n"
+        "<i>This Free token is restricted to <b>1 IP address only</b>. It will automatically lock to the first IP that uses it.</i>\n\n"
         "<b>Included Instruments:</b>\n"
         "• Standard: <b>SPX, SPY, NDX, QQQ</b> (Futures: ES, NQ)\n"
         "<i>(GLD and VIX require a ⭐ Premium token)</i>\n\n"
@@ -318,13 +320,13 @@ async def _premium_payload(context, user):
     if not await _is_premium_member(context, user.id):
         return _PREMIUM_JOIN, await _premium_join_keyboard(context)
     
+    rec = tokens.get_user(user.id)
+    if rec and rec.get("tier") == "premium":
+        return _token_msg(rec["token"], rec), await _token_keyboard(context, is_premium=True)
+    
     token, rec = tokens.create_or_get(
-        user.id, user.username or user.full_name, tier="premium")
-    msg = (
-        "🎉 <b>Congratulations! Premium Membership Verified.</b>\n\n"
-        + _token_msg(token, rec)
-    )
-    return msg, await _token_keyboard(context, is_premium=True)
+        user.id, user.username or user.full_name, days=None, tier="premium")
+    return _token_msg(token, rec), await _token_keyboard(context, is_premium=True)
 
 
 async def _mytoken_payload(context, user):
@@ -402,6 +404,8 @@ async def _mq_trial_payload(context, user):
             "Trials are limited to 1 per member.\n\n"
             f"Your trial token:\n<code>{existing['token']}</code>\n\n"
             f"Valid until: <b>{exp_txt}</b>\n\n"
+            "⚠️ <b>IP Restriction:</b>\n"
+            "<i>This trial token is restricted to <b>1 IP address only</b>. It will lock to the first IP that connects to the feed.</i>\n\n"
             "<i>Paste this token into the MenthorQ indicator settings in NinjaTrader.</i>"
         ), back_kb
 
@@ -419,6 +423,8 @@ async def _mq_trial_payload(context, user):
         "Here is your 14-day trial token for the MenthorQ indicator:\n\n"
         f"<code>{token}</code>\n\n"
         f"Valid until: <b>{exp_txt}</b> (14 days)\n\n"
+        "⚠️ <b>IP Restriction:</b>\n"
+        "<i>This trial token is restricted to <b>1 IP address only</b>. It will automatically lock to the first machine / IP that connects to it.</i>\n\n"
         "<b>Instructions:</b>\n"
         "1️⃣ Copy the token above\n"
         "2️⃣ In NinjaTrader, open the MenthorQ Indicator settings\n"
