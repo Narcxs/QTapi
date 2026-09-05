@@ -193,6 +193,44 @@ def create_or_get(telegram_id: int, username: str, days: int = 7, tier: str = "f
         return _issue(data, telegram_id, username, days, tier)
 
 
+def can_renew_premium(telegram_id: int) -> tuple:
+    """Check if a premium user can regenerate their token (limit: 3 per 7 days).
+    Returns (allowed: bool, remaining_renewals: int, resets_in_sec: int).
+    """
+    with _lock:
+        data = _load_raw()
+        now = _now()
+        history = [
+            t for t, r in data.get("tokens", {}).items()
+            if r.get("telegram_id") == telegram_id and r.get("tier") == "premium"
+        ]
+        # Filter timestamps from the last 7 days (604800 seconds)
+        recent = [
+            data["tokens"][t]["created_at"] for t in history
+            if now - data["tokens"][t].get("created_at", 0) < 7 * 86400
+        ]
+        # Max 3 renewals per rolling 7-day window (initial creation doesn't count against limit, but we track all recent creations)
+        # To be user friendly: max 3 NEW tokens created in a 7-day rolling window
+        count = len(recent)
+        max_allowed = 3
+        if count >= max_allowed:
+            oldest = min(recent)
+            resets_in = (oldest + 7 * 86400) - now
+            return False, 0, max(1, resets_in)
+        return True, max_allowed - count, 0
+
+
+def renew_premium(telegram_id: int, username: str) -> tuple:
+    """Revoke existing active tokens and issue a fresh Premium token with qt_prem_ prefix."""
+    with _lock:
+        data = _load_raw()
+        for t, rec in data["tokens"].items():
+            if rec.get("telegram_id") == telegram_id:
+                rec["revoked"] = True
+        token, rec = _issue(data, telegram_id, username, days=0, tier="premium")
+        return token, rec
+
+
 def grant_premium(telegram_id: int, username: str):
     """Revoke previous and grant an indefinite Premium token."""
     with _lock:
@@ -224,7 +262,8 @@ def renew(telegram_id: int, username: str, days: int = 7, tier: str = "free"):
 
 
 def _issue(data: dict, telegram_id: int, username: str, days: int = 7, tier: str = "free"):
-    token = "qt_" + secrets.token_urlsafe(24)
+    prefix = "qt_prem_" if tier == "premium" else "qt_"
+    token = prefix + secrets.token_urlsafe(24)
     exp = None if tier == "premium" else (_now() + days * 86400)
     rec = {
         "telegram_id": telegram_id,

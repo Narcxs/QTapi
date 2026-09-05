@@ -181,10 +181,10 @@ async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE,
 
 async def _token_keyboard(context: ContextTypes.DEFAULT_TYPE,
                           is_premium: bool = False) -> InlineKeyboardMarkup:
-    """Under an active token card: renew (enabled at expiry) / upgrade + links."""
+    """Under an active token card: renew / upgrade / regenerate + links."""
     rows = []
     if is_premium:
-        rows.append([InlineKeyboardButton("⭐ Premium Active (Indefinite)", callback_data="menu_token")])
+        rows.append([InlineKeyboardButton("♻️ Regenerate Token (3x / week)", callback_data="menu_renew_prem")])
     else:
         rows.append([InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="menu_premium"),
                      InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")])
@@ -359,13 +359,39 @@ async def _mytoken_payload(context, user):
     return _token_msg(token, rec), await _token_keyboard(context, is_premium=False)
 
 
+async def _renew_premium_payload(context, user):
+    """Regenerate a fresh Premium token (max 3 times per week)."""
+    if not await _is_premium_member(context, user.id):
+        return _PREMIUM_JOIN, await _premium_join_keyboard(context)
+
+    allowed, rem, resets_in = tokens.can_renew_premium(user.id)
+    if not allowed:
+        hours = max(1, resets_in // 3600)
+        days = hours // 24
+        time_hint = f"{days} day(s)" if days >= 1 else f"{hours} hour(s)"
+        msg = (
+            "<b>⏳ Renewal Limit Reached</b>\n\n"
+            "You have reached the maximum limit of <b>3 token renewals per week</b>.\n\n"
+            f"Next renewal available in approximately <b>{time_hint}</b>.\n"
+            "Your current token remains fully active."
+        )
+        return msg, await _token_keyboard(context, is_premium=True)
+
+    token, rec = tokens.renew_premium(user.id, user.username or user.full_name)
+    rem_txt = f"{rem} renewal(s) remaining this week" if rem > 0 else "0 renewals remaining this week"
+    msg = (
+        "♻️ <b>Your Premium token has been regenerated!</b>\n"
+        f"<i>({rem_txt})</i>\n\n"
+        + _token_msg(token, rec)
+    )
+    return msg, await _token_keyboard(context, is_premium=True)
+
+
 async def _renew_payload(context, user):
-    """Renew once the free token has expired (or within its last 24 hours)."""
+    """Renew once the free token has expired (or within its last 24 hours), or renew premium."""
     rec = tokens.get_user(user.id)
     if rec and rec.get("tier") == "premium":
-        return ("<b>⭐ Premium Token Active</b>\n\n"
-                "Your Premium token is permanent and does not expire!\n"
-                "You do not need to renew it."), await _token_keyboard(context, is_premium=True)
+        return await _renew_premium_payload(context, user)
 
     if not await _is_member(context, user.id):
         return _JOIN, await _join_keyboard(context)
@@ -685,10 +711,20 @@ async def cb_menu(update: Update, context):
             text = _mq_detail_text(menthorq.get_levels(), q.data[3:])
             markup = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("⬅️ Back", callback_data="mq_back")]])
+    elif q.data == "menu_renew_prem":
+        text, markup = await _renew_premium_payload(context, user)
     elif q.data == "menu_renew":
         # renew only works after expiry (or in the last 24h before it)
         if await _is_member(context, user.id):
             rec = tokens.get_user(user.id)
+            if rec and rec.get("tier") == "premium":
+                text, markup = await _renew_premium_payload(context, user)
+                await q.answer()
+                try:
+                    await q.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+                except Exception:
+                    await q.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+                return
             if rec and (rec.get("expires_at") or 0) - int(time.time()) > _RENEW_WINDOW_SEC:
                 await q.answer(
                     f"⏳ Your token is still valid until {tokens.fmt_exp(rec)}.\n"
@@ -1395,7 +1431,7 @@ def main():
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_verify_premium, pattern="^verify_premium$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|health|cv|mq|mq_trial|start)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|renew_prem|health|cv|mq|mq_trial|start)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_tokens, pattern=r"^adm_tokens:\d+:(all|prem|free)$"))
