@@ -173,6 +173,20 @@ def revoke(token: str) -> bool:
         return False
 
 
+def reset_ip(telegram_id: int) -> bool:
+    """Clear the bound_ip for a user's trial token."""
+    with _lock:
+        data = _load_raw()
+        changed = False
+        for rec in data["tokens"].values():
+            if rec.get("telegram_id") == telegram_id and "bound_ip" in rec:
+                del rec["bound_ip"]
+                changed = True
+        if changed:
+            _save(data)
+        return changed
+
+
 def list_all():
     return list(_load_cached().get("tokens", {}).items())
 

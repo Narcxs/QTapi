@@ -186,9 +186,10 @@ async def _token_keyboard(context: ContextTypes.DEFAULT_TYPE,
     if is_premium:
         rows.append([InlineKeyboardButton("♻️ Regenerate Token (3x / week)", callback_data="menu_renew_prem")])
     else:
-        rows.append([InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="menu_premium"),
+        rows.append([InlineKeyboardButton("🔄 Reset IP lock", callback_data="menu_reset_ip")])
+        rows.append([InlineKeyboardButton("💎 Upgrade to Premium", callback_data="menu_premium"),
                      InlineKeyboardButton("♻️ Renew", callback_data="menu_renew")])
-    rows.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")])
+    rows.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_start")])
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -418,7 +419,10 @@ async def _mq_trial_payload(context, user):
     if not await _is_member(context, user.id):
         return _JOIN, await _join_keyboard(context)
 
-    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_start")]])
+    back_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Reset IP lock", callback_data="menu_mq_reset_ip")],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_start")]
+    ])
     existing = mq_tokens.get_user_trial(user.id)
     if existing:
         if existing.get("revoked"):
@@ -696,6 +700,22 @@ async def cb_menu(update: Update, context):
         text, markup = await _premium_payload(context, user)
     elif q.data == "menu_mq_trial":
         text, markup = await _mq_trial_payload(context, user)
+    elif q.data == "menu_reset_ip":
+        changed = tokens.reset_ip(user.id)
+        if changed:
+            await q.answer("IP restriction reset successfully.", show_alert=True)
+            text, markup = await _mytoken_payload(context, user)
+        else:
+            await q.answer("No active free token found or no IP bound.", show_alert=True)
+            return
+    elif q.data == "menu_mq_reset_ip":
+        changed = mq_tokens.reset_ip(user.id)
+        if changed:
+            await q.answer("MenthorQ Trial IP restriction reset successfully.", show_alert=True)
+            text, markup = await _mq_trial_payload(context, user)
+        else:
+            await q.answer("No trial token found or no IP bound.", show_alert=True)
+            return
     elif q.data == "menu_health":
         if not _is_admin(user.id):
             await q.answer("Admin only.", show_alert=True)
@@ -1431,7 +1451,7 @@ def main():
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_verify_premium, pattern="^verify_premium$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|renew_prem|health|cv|mq|mq_trial|start)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|renew_prem|health|cv|mq|mq_trial|start|reset_ip|mq_reset_ip)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_tokens, pattern=r"^adm_tokens:\d+:(all|prem|free)$"))

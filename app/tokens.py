@@ -301,6 +301,20 @@ def revoke_user(telegram_id: int) -> int:
         return n
 
 
+def reset_ip(telegram_id: int) -> bool:
+    """Clear the bound_ip for a user's free token."""
+    with _lock:
+        data = _load_raw()
+        changed = False
+        for rec in data["tokens"].values():
+            if rec.get("telegram_id") == telegram_id and rec.get("tier") == "free" and "bound_ip" in rec:
+                del rec["bound_ip"]
+                changed = True
+        if changed:
+            _save(data)
+        return changed
+
+
 def list_all(tier_filter: str = None, only_active: bool = False):
     items = list(_load_cached().get("tokens", {}).items())
     # Sort by created_at descending (most recent first)
