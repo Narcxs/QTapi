@@ -57,7 +57,17 @@ def create_user(name: str, days: int, pack: str = "ultra"):
             resp_data = resp.text
             
         if resp.status_code != 200:
-            return False, f"HTTP {resp.status_code}: {resp_data[:100]}", None
+            return False, f"HTTP {resp.status_code}: {str(resp_data)[:100]}", None
+            
+        if isinstance(resp_data, dict):
+            code = resp_data.get('code')
+            msg = resp_data.get('msg', '')
+            # Si le code existe et n'est ni 0 ni 200, c'est une erreur d'API
+            if code is not None and str(code) not in ("0", "200"):
+                return False, f"Erreur API Dicloak ({code}): {msg}", None
+            # S'il n'y a pas de code mais un message d'erreur
+            if not code and "error" in msg.lower():
+                return False, f"Erreur API Dicloak : {msg}", None
             
     except Exception as e:
         return False, str(e), None
