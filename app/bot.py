@@ -740,8 +740,18 @@ async def cb_menu(update: Update, context):
         if not _is_admin(user.id):
             return
         await q.answer()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💎 Ultra Pack", callback_data="dicloak_create_ultra")],
+            [InlineKeyboardButton("🔙 Back", callback_data="dicloak_menu")]
+        ])
+        await q.edit_message_text("Sélectionnez le type d'abonnement à créer :", reply_markup=kb)
+        return
+    elif q.data == "dicloak_create_ultra":
+        if not _is_admin(user.id):
+            return
+        await q.answer()
         _dicloak_state[user.id] = {"step": "NAME", "name": "", "days": 0}
-        await q.message.reply_text("Veuillez entrer le nom d'utilisateur Dicloak :")
+        await q.message.reply_text("Veuillez entrer le nom d'utilisateur Dicloak (Ultra Pack) :")
         return
     elif q.data == "dicloak_list":
         if not _is_admin(user.id):
@@ -1625,7 +1635,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|renew_prem|health|cv|mq|mq_trial|start|reset_ip|mq_reset_ip)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^dicloak_(menu|create|list|search|exp:.*)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^dicloak_(menu|create|create_ultra|list|search|exp:.*)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_tokens, pattern=r"^adm_tokens:\d+:(all|prem|free)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_revoke, pattern=r"^adm_r:[\w\-]+:\d+:(all|prem|free)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_unrevoke, pattern=r"^adm_u:[\w\-]+:\d+:(all|prem|free)$"))
