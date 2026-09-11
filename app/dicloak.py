@@ -38,15 +38,36 @@ def _save(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, p)
 
+def _generate_password(length=12):
+    import string
+    import random
+    chars = string.ascii_letters + string.digits
+    while True:
+        pwd = ''.join(random.choice(chars) for _ in range(length))
+        if (any(c.islower() for c in pwd) and 
+            any(c.isupper() for c in pwd) and 
+            any(c.isdigit() for c in pwd)):
+            return pwd
+
 def create_user(name: str, days: int, pack: str = "ultra"):
-    password = secrets.token_urlsafe(12)
-    
+    password = _generate_password(12)
+    # Dicloak account must probably be alphanumeric
+    account = "".join(c for c in name if c.isalnum()).lower()
+    if len(account) < 4:
+        import secrets
+        account += secrets.token_hex(2)
+        
     # URL for dicloak API (GET request)
     base_url = PACK_URLS.get(pack)
     if not base_url:
         return False, "Pack invalide", None
         
-    url = f"{base_url}&name={name}&account={name}&password={password}&days={days}"
+    import urllib.parse
+    q_name = urllib.parse.quote(name)
+    q_acc = urllib.parse.quote(account)
+    q_pwd = urllib.parse.quote(password)
+    
+    url = f"{base_url}&name={q_name}&account={q_acc}&password={q_pwd}&remark=telegram&days={days}"
     
     try:
         resp = httpx.get(url, timeout=10.0)
@@ -82,11 +103,12 @@ def create_user(name: str, days: int, pack: str = "ultra"):
             "expires_at": _now() + days * 86400,
             "api_response": resp_data,
             "status": "active",
-            "pack": pack
+            "pack": pack,
+            "account": account
         }
         _save(data)
         
-    return True, "Success", {"name": name, "password": password, "days": days, "pack": pack}
+    return True, "Success", {"name": name, "account": account, "password": password, "days": days, "pack": pack}
 
 def list_users() -> list:
     data = _load_raw()

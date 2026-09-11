@@ -657,7 +657,7 @@ def _format_dicloak_success(data):
         "🍏 *macOS:* [Apple Silicon](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_arm64.dmg) | [Intel](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_x64.dmg)\n"
         "🪟 *Windows:* [64-bit](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_x64.exe) | [32-bit](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_ia32.exe)\n\n"
         "Once installed, log in using the credentials below:\n\n"
-        f"*Username:* `{data['name']}`\n"
+        f"*Username:* `{data.get('account', data['name'])}`\n"
         f"*Password:* `{data['password']}`\n"
         f"*Expiration Date:* {exp_date}"
     )
