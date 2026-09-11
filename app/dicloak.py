@@ -2,7 +2,7 @@ import json
 import os
 import threading
 import time
-import requests
+import httpx
 from datetime import datetime, timezone
 import secrets
 from . import config
@@ -48,7 +48,7 @@ def create_user(name: str, days: int):
     }
     
     try:
-        resp = requests.post(DICLOAK_API_URL, json=payload, timeout=10)
+        resp = httpx.post(DICLOAK_API_URL, json=payload, timeout=10.0)
         resp_data = resp.json()
     except Exception as e:
         return False, str(e), None
