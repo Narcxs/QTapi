@@ -1562,7 +1562,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     try:
         if isinstance(update, Update) and update.effective_message:
             await update.effective_message.reply_text(
-                "⚠️ Something went wrong. Please try again.")
+                f"⚠️ Something went wrong. Error: {context.error}")
     except Exception:  # noqa: BLE001
         pass
 
