@@ -644,6 +644,20 @@ def _mq_keyboard() -> InlineKeyboardMarkup:
 # --------------------------------------------------------------------------- #
 # buttons
 # --------------------------------------------------------------------------- #
+def _format_dicloak_success(data):
+    from datetime import datetime, timezone, timedelta
+    exp_date = (datetime.now(timezone.utc) + timedelta(days=data['days'])).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        "Hi there,\n\n"
+        "Thank you for putting your trust in the QT Finance Team. ✔️ We are excited to have you on board! "
+        "Your subscription is now active, and to get started,Regarding the Options Depth and QuantData services, "
+        "please ensure that you create your own personal templates use the name gex_{number} for renamte template "
+        "please it's important really important\n\n"
+        f"**Username:** `{data['name']}`\n"
+        f"**Password:** `{data['password']}`\n"
+        f"**Expiration Date:** {exp_date}"
+    )
+
 async def cb_menu(update: Update, context):
     """Handles the main-menu buttons."""
     q = update.callback_query
@@ -803,10 +817,7 @@ async def cb_menu(update: Update, context):
         
         if success:
             await q.message.reply_text(
-                f"✅ Utilisateur Dicloak créé avec succès !\n\n"
-                f"*Nom:* `{data['name']}`\n"
-                f"*Mot de passe:* `{data['password']}`\n"
-                f"*Expiration:* {data['days']} jours",
+                _format_dicloak_success(data),
                 parse_mode="Markdown"
             )
         else:
@@ -890,10 +901,7 @@ async def on_text(update: Update, context):
             
             if success:
                 await update.message.reply_text(
-                    f"✅ Utilisateur Dicloak créé avec succès !\n\n"
-                    f"**Nom:** `{data['name']}`\n"
-                    f"**Mot de passe:** `{data['password']}`\n"
-                    f"**Expiration:** {data['days']} jours",
+                    _format_dicloak_success(data),
                     parse_mode="Markdown"
                 )
             else:
