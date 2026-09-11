@@ -651,15 +651,15 @@ def _format_dicloak_success(data):
         "Hi there,\n\n"
         "Thank you for putting your trust in the QT Finance Team! ✔️ We are excited to have you on board.\n"
         "Your subscription is now active.\n\n"
-        "⚠️ *Important Note for Options Depth and QuantData:*\n"
-        "Please ensure that you create your own personal templates using the name `gex_{number}` when renaming. This is a crucial step!\n\n"
-        "⬇️ *Download DICloak:*\n"
-        "🍏 *macOS:* [Apple Silicon](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_arm64.dmg) | [Intel](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_x64.dmg)\n"
-        "🪟 *Windows:* [64-bit](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_x64.exe) | [32-bit](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_ia32.exe)\n\n"
+        "⚠️ <b>Important Note for Options Depth and QuantData:</b>\n"
+        "Please ensure that you create your own personal templates using the name <code>gex_{number}</code> when renaming. This is a crucial step!\n\n"
+        "⬇️ <b>Download DICloak:</b>\n"
+        "🍏 <b>macOS:</b> <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_arm64.dmg\">Apple Silicon</a> | <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_x64.dmg\">Intel</a>\n"
+        "🪟 <b>Windows:</b> <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_x64.exe\">64-bit</a> | <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_ia32.exe\">32-bit</a>\n\n"
         "Once installed, log in using the credentials below:\n\n"
-        f"*Username:* `{data.get('account', data['name'])}`\n"
-        f"*Password:* `{data['password']}`\n"
-        f"*Expiration Date:* {exp_date}"
+        f"<b>Username:</b> <code>{data.get('account', data['name'])}</code>\n"
+        f"<b>Password:</b> <code>{data['password']}</code>\n"
+        f"<b>Expiration Date:</b> {exp_date}"
     )
 
 async def cb_menu(update: Update, context):
@@ -822,7 +822,7 @@ async def cb_menu(update: Update, context):
         if success:
             await q.message.reply_text(
                 _format_dicloak_success(data),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         else:
             await q.message.reply_text(f"❌ Erreur lors de la création : {msg}")
@@ -906,7 +906,7 @@ async def on_text(update: Update, context):
             if success:
                 await update.message.reply_text(
                     _format_dicloak_success(data),
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
             else:
                 await update.message.reply_text(f"❌ Erreur lors de la création : {msg}")
