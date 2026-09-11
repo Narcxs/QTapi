@@ -33,7 +33,7 @@ from telegram.constants import ChatType
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
-from . import config, hwids, menthorq, mq_tokens, subscribers, tokens, warns
+from . import config, hwids, menthorq, mq_tokens, subscribers, tokens, warns, dicloak
 
 _group_link_cache = {"link": None}
 
@@ -42,6 +42,7 @@ _group_link_cache = {"link": None}
 # a bot restart, the user taps the button again / the admin sees "expired".
 _cv_awaiting_hwid = set()          # telegram user ids
 _cv_requests = {}                  # req_id -> {user_id, username, hwid}
+_dicloak_state = {}                # telegram user_id -> {"step": "", "name": "", "days": 0}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -169,10 +170,11 @@ async def _menu_keyboard(context: ContextTypes.DEFAULT_TYPE,
             [InlineKeyboardButton("🖥️ Get CV License", callback_data="menu_cv"),
              InlineKeyboardButton("📊 MenthorQ Levels", callback_data="menu_mq")]]
     if admin:
-        rows.append([InlineKeyboardButton("👑 Manage Tokens", callback_data="adm_tokens:0:all"),
-                     InlineKeyboardButton("🔐 Create MQ Token", callback_data="mqt_menu")])
-        rows.append([InlineKeyboardButton("🩺 API Health", callback_data="menu_health"),
+        rows.append([InlineKeyboardButton("🔑 Manage Tokens", callback_data="adm_tokens:0:all"),
+                     InlineKeyboardButton("〽️ Create MQ Token", callback_data="mqt_menu")])
+        rows.append([InlineKeyboardButton("🏥 API Health", callback_data="menu_health"),
                      InlineKeyboardButton("📢 Broadcast", callback_data="bcast_menu")])
+        rows.append([InlineKeyboardButton("👤 Dicloak Mgmt", callback_data="dicloak_menu")])
     links = await _links_row(context)
     if links:
         rows.append(links)
@@ -721,6 +723,48 @@ async def cb_menu(update: Update, context):
             await q.answer("Admin only.", show_alert=True)
             return
         text, markup = await _health_text(), await _menu_keyboard(context, _is_admin(user.id))
+    elif q.data == "dicloak_menu":
+        if not _is_admin(user.id):
+            await q.answer("Admin only.", show_alert=True)
+            return
+        await q.answer()
+        _dicloak_state[user.id] = {"step": "NAME", "name": "", "days": 0}
+        await q.message.reply_text("Veuillez entrer le nom d'utilisateur Dicloak :")
+        return
+    elif q.data.startswith("dicloak_exp:"):
+        if not _is_admin(user.id):
+            await q.answer("Admin only.", show_alert=True)
+            return
+        if user.id not in _dicloak_state:
+            await q.answer("Session expirée.", show_alert=True)
+            return
+            
+        exp_val = q.data.split(":")[1]
+        state = _dicloak_state[user.id]
+        
+        if exp_val == "custom":
+            state["step"] = "AWAITING_CUSTOM_DAYS"
+            await q.answer()
+            await q.message.reply_text("Combien de jours d'expiration ? (ex: 7)")
+            return
+            
+        days = int(exp_val)
+        await q.answer()
+        await q.message.reply_text(f"Création de l'utilisateur {state['name']} pour {days} jours...")
+        success, msg, data = dicloak.create_user(state['name'], days)
+        del _dicloak_state[user.id]
+        
+        if success:
+            await q.message.reply_text(
+                f"✅ Utilisateur Dicloak créé avec succès !\n\n"
+                f"*Nom:* `{data['name']}`\n"
+                f"*Mot de passe:* `{data['password']}`\n"
+                f"*Expiration:* {data['days']} jours",
+                parse_mode="Markdown"
+            )
+        else:
+            await q.message.reply_text(f"❌ Erreur lors de la création : {msg}")
+        return
     elif q.data in ("menu_mq", "mq_back") or q.data.startswith("mq_"):
         # MenthorQ levels: free of charge, but GROUP MEMBERS ONLY
         if not await _is_member(context, user.id):
@@ -763,12 +807,55 @@ async def cb_menu(update: Update, context):
 
 
 async def on_text(update: Update, context):
-    """Captures the Machine ID after the user tapped 'Get CV License'."""
+    """Captures text inputs from the user."""
     user = update.effective_user
+    text = (update.message.text or "").strip()
+    
+    if user.id in _dicloak_state:
+        state = _dicloak_state[user.id]
+        if state["step"] == "NAME":
+            if not text:
+                return
+            state["name"] = text
+            state["step"] = "CUSTOM_DAYS" # Just to avoid hitting it again
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("1 Day", callback_data="dicloak_exp:1"),
+                 InlineKeyboardButton("1 Month", callback_data="dicloak_exp:30")],
+                [InlineKeyboardButton("1 Year", callback_data="dicloak_exp:365"),
+                 InlineKeyboardButton("Custom Days", callback_data="dicloak_exp:custom")]
+            ])
+            await update.message.reply_text(f"Nom : {text}\nSélectionnez l'expiration :", reply_markup=kb)
+            return
+        elif state["step"] == "AWAITING_CUSTOM_DAYS":
+            try:
+                days = int(text)
+                if days <= 0:
+                    raise ValueError()
+            except ValueError:
+                await update.message.reply_text("Veuillez entrer un nombre valide de jours :")
+                return
+            
+            # Create user
+            await update.message.reply_text(f"Création de l'utilisateur {state['name']} pour {days} jours...")
+            success, msg, data = dicloak.create_user(state['name'], days)
+            del _dicloak_state[user.id]
+            
+            if success:
+                await update.message.reply_text(
+                    f"✅ Utilisateur Dicloak créé avec succès !\n\n"
+                    f"**Nom:** `{data['name']}`\n"
+                    f"**Mot de passe:** `{data['password']}`\n"
+                    f"**Expiration:** {data['days']} jours",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(f"❌ Erreur lors de la création : {msg}")
+            return
+
     if user.id not in _cv_awaiting_hwid:
         return
     _cv_awaiting_hwid.discard(user.id)
-    hwid = (update.message.text or "").strip()
+    hwid = text
     if not (3 <= len(hwid) <= 128) or "\n" in hwid:
         await update.message.reply_text(
             "⚠️ That doesn't look like a valid Machine ID. "
