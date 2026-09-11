@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 import httpx
 from datetime import datetime, timezone
 import secrets
@@ -54,7 +55,6 @@ def create_user(name: str, days: int, pack: str = "ultra"):
     # Dicloak account must probably be alphanumeric
     account = "".join(c for c in name if c.isalnum()).lower()
     if len(account) < 4:
-        import secrets
         account += secrets.token_hex(2)
         
     # URL for dicloak API (GET request)
@@ -62,7 +62,6 @@ def create_user(name: str, days: int, pack: str = "ultra"):
     if not base_url:
         return False, "Pack invalide", None
         
-    import urllib.parse
     q_name = urllib.parse.quote(name)
     q_acc = urllib.parse.quote(account)
     q_pwd = urllib.parse.quote(password)
