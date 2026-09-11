@@ -728,8 +728,41 @@ async def cb_menu(update: Update, context):
             await q.answer("Admin only.", show_alert=True)
             return
         await q.answer()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Create User", callback_data="dicloak_create")],
+            [InlineKeyboardButton("👥 View All Users", callback_data="dicloak_list")],
+            [InlineKeyboardButton("🔍 Search User", callback_data="dicloak_search")],
+            [InlineKeyboardButton("🔙 Back", callback_data="menu_start")]
+        ])
+        await q.edit_message_text("👤 **Dicloak Management**", parse_mode="Markdown", reply_markup=kb)
+        return
+    elif q.data == "dicloak_create":
+        if not _is_admin(user.id):
+            return
+        await q.answer()
         _dicloak_state[user.id] = {"step": "NAME", "name": "", "days": 0}
         await q.message.reply_text("Veuillez entrer le nom d'utilisateur Dicloak :")
+        return
+    elif q.data == "dicloak_list":
+        if not _is_admin(user.id):
+            return
+        await q.answer()
+        users = dicloak.list_users()
+        if not users:
+            await q.message.reply_text("Aucun utilisateur Dicloak trouvé.")
+            return
+        text = "👥 **Utilisateurs Dicloak**\n\n"
+        for uid, u in users:
+            exp_txt = datetime.fromtimestamp(u['expires_at'], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+            text += f"🔹 `{u['name']}` (Exp: {exp_txt})\n`/dle {uid}` (Gérer)\n\n"
+        await q.message.reply_text(text, parse_mode="Markdown")
+        return
+    elif q.data == "dicloak_search":
+        if not _is_admin(user.id):
+            return
+        await q.answer()
+        _dicloak_state[user.id] = {"step": "SEARCH_NAME"}
+        await q.message.reply_text("Entrez le nom de l'utilisateur à rechercher :")
         return
     elif q.data.startswith("dicloak_exp:"):
         if not _is_admin(user.id):
@@ -850,6 +883,18 @@ async def on_text(update: Update, context):
                 )
             else:
                 await update.message.reply_text(f"❌ Erreur lors de la création : {msg}")
+            return
+        elif state["step"] == "SEARCH_NAME":
+            users = dicloak.search_users(text)
+            del _dicloak_state[user.id]
+            if not users:
+                await update.message.reply_text("Aucun utilisateur Dicloak trouvé avec ce nom.")
+                return
+            res_txt = f"🔍 **Résultats pour '{text}':**\n\n"
+            for uid, u in users:
+                exp_txt = datetime.fromtimestamp(u['expires_at'], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+                res_txt += f"🔹 `{u['name']}` (Exp: {exp_txt})\n`/dle {uid}` (Gérer)\n\n"
+            await update.message.reply_text(res_txt, parse_mode="Markdown")
             return
 
     if user.id not in _cv_awaiting_hwid:
@@ -1505,6 +1550,43 @@ async def _post_init(app: Application):
     ])
 
 
+async def cmd_dle(update: Update, context):
+    if not _is_admin(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /dle <uid>")
+        return
+    uid = context.args[0]
+    all_users = dict(dicloak.list_users())
+    if uid not in all_users:
+        await update.message.reply_text("Utilisateur introuvable.")
+        return
+    u = all_users[uid]
+    exp_txt = datetime.fromtimestamp(u['expires_at'], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ 1 Jour", callback_data=f"dle_ext:{uid}:1"),
+         InlineKeyboardButton("➕ 30 Jours", callback_data=f"dle_ext:{uid}:30")]
+    ])
+    await update.message.reply_text(f"👤 **{u['name']}**\nExp: {exp_txt}\n\nÉtendre l'abonnement :", reply_markup=kb, parse_mode="Markdown")
+
+async def cb_dle(update: Update, context):
+    q = update.callback_query
+    user = q.from_user
+    if not _is_admin(user.id):
+        await q.answer("Admin only.", show_alert=True)
+        return
+    _, uid, days = q.data.split(":")
+    days = int(days)
+    ok = dicloak.extend_user(uid, days)
+    if ok:
+        await q.answer(f"Prolongé de {days} jours.", show_alert=True)
+        try:
+            await q.edit_message_text(f"✅ Prolongé de {days} jours avec succès.")
+        except Exception:
+            pass
+    else:
+        await q.answer("Erreur: utilisateur introuvable.", show_alert=True)
+
 def main():
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("TELEGRAM_BOT_TOKEN is missing in server/.env")
@@ -1532,10 +1614,12 @@ def main():
     app.add_handler(CommandHandler("cvlist", cmd_cvlist))
     app.add_handler(CommandHandler("mqlist", cmd_mqlist))
     app.add_handler(CommandHandler("mqrevoke", cmd_mqrevoke))
+    app.add_handler(CommandHandler("dle", cmd_dle))
     app.add_handler(CommandHandler("warn", cmd_warn))
     app.add_handler(CommandHandler("warns", cmd_warns))
     app.add_handler(CommandHandler("unwarn", cmd_unwarn))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CallbackQueryHandler(cb_dle, pattern="^dle_ext:.*$"))
     app.add_handler(CallbackQueryHandler(cb_check_entry, pattern="^check_entry$"))
     app.add_handler(CallbackQueryHandler(cb_verify_premium, pattern="^verify_premium$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|renew_prem|health|cv|mq|mq_trial|start|reset_ip|mq_reset_ip)$"))

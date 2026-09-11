@@ -67,3 +67,30 @@ def create_user(name: str, days: int):
         _save(data)
         
     return True, "Success", {"name": name, "password": password, "days": days}
+
+def list_users() -> list:
+    data = _load_raw()
+    return list(data.get("users", {}).items())
+
+def search_users(username: str) -> list:
+    username = username.lower()
+    data = _load_raw()
+    res = []
+    for uid, u in data.get("users", {}).items():
+        if username in u.get("name", "").lower():
+            res.append((uid, u))
+    return res
+
+def extend_user(uid: str, days: int) -> bool:
+    with _lock:
+        data = _load_raw()
+        if uid in data.get("users", {}):
+            u = data["users"][uid]
+            # if already expired, start from now
+            current_exp = u.get("expires_at", _now())
+            if current_exp < _now():
+                current_exp = _now()
+            u["expires_at"] = current_exp + (days * 86400)
+            _save(data)
+            return True
+        return False
