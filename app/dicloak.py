@@ -38,18 +38,21 @@ def _save(data: dict) -> None:
 def create_user(name: str, days: int):
     password = secrets.token_urlsafe(12)
     
-    # Payload for dicloak API
-    payload = {
-        "name": name,
-        "passwd": password,
-        "authority": "MEMBER",
-        "type": "EXTERNAL",
-        "status": "ENABLE"
-    }
+    # URL for dicloak API (GET request)
+    # The user provided: https://app.dicloak.com/gin/v1/api/member/open?token=...&id=...
+    url = f"{DICLOAK_API_URL}&name={name}&account={name}&password={password}&days={days}"
     
     try:
-        resp = httpx.post(DICLOAK_API_URL, json=payload, timeout=10.0)
-        resp_data = resp.json()
+        resp = httpx.get(url, timeout=10.0)
+        # Check if it's JSON
+        try:
+            resp_data = resp.json()
+        except Exception:
+            resp_data = resp.text
+            
+        if resp.status_code != 200:
+            return False, f"HTTP {resp.status_code}: {resp_data[:100]}", None
+            
     except Exception as e:
         return False, str(e), None
 
