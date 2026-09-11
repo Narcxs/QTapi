@@ -742,16 +742,19 @@ async def cb_menu(update: Update, context):
         await q.answer()
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("💎 Ultra Pack", callback_data="dicloak_create_ultra")],
+            [InlineKeyboardButton("⭐ Basic Pack", callback_data="dicloak_create_basic")],
             [InlineKeyboardButton("🔙 Back", callback_data="dicloak_menu")]
         ])
         await q.edit_message_text("Sélectionnez le type d'abonnement à créer :", reply_markup=kb)
         return
-    elif q.data == "dicloak_create_ultra":
+    elif q.data in ("dicloak_create_ultra", "dicloak_create_basic"):
         if not _is_admin(user.id):
             return
         await q.answer()
-        _dicloak_state[user.id] = {"step": "NAME", "name": "", "days": 0}
-        await q.message.reply_text("Veuillez entrer le nom d'utilisateur Dicloak (Ultra Pack) :")
+        pack = "ultra" if q.data.endswith("ultra") else "basic"
+        pack_name = "Ultra Pack" if pack == "ultra" else "Basic Pack"
+        _dicloak_state[user.id] = {"step": "NAME", "name": "", "days": 0, "pack": pack}
+        await q.message.reply_text(f"Veuillez entrer le nom d'utilisateur Dicloak ({pack_name}) :")
         return
     elif q.data == "dicloak_list":
         if not _is_admin(user.id):
@@ -794,7 +797,8 @@ async def cb_menu(update: Update, context):
         days = int(exp_val)
         await q.answer()
         await q.message.reply_text(f"Création de l'utilisateur {state['name']} pour {days} jours...")
-        success, msg, data = dicloak.create_user(state['name'], days)
+        pack = state.get('pack', 'ultra')
+        success, msg, data = dicloak.create_user(state['name'], days, pack)
         del _dicloak_state[user.id]
         
         if success:
@@ -880,7 +884,8 @@ async def on_text(update: Update, context):
             
             # Create user
             await update.message.reply_text(f"Création de l'utilisateur {state['name']} pour {days} jours...")
-            success, msg, data = dicloak.create_user(state['name'], days)
+            pack = state.get('pack', 'ultra')
+            success, msg, data = dicloak.create_user(state['name'], days, pack)
             del _dicloak_state[user.id]
             
             if success:

@@ -10,7 +10,10 @@ from . import config
 _lock = threading.Lock()
 _cache = {"data": None, "mtime": None}
 
-DICLOAK_API_URL = "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2098479368974073858"
+PACK_URLS = {
+    "ultra": "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2098479368974073858",
+    "basic": "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2098487691383373826"
+}
 
 def _now() -> int:
     return int(time.time())
@@ -35,12 +38,15 @@ def _save(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, p)
 
-def create_user(name: str, days: int):
+def create_user(name: str, days: int, pack: str = "ultra"):
     password = secrets.token_urlsafe(12)
     
     # URL for dicloak API (GET request)
-    # The user provided: https://app.dicloak.com/gin/v1/api/member/open?token=...&id=...
-    url = f"{DICLOAK_API_URL}&name={name}&account={name}&password={password}&days={days}"
+    base_url = PACK_URLS.get(pack)
+    if not base_url:
+        return False, "Pack invalide", None
+        
+    url = f"{base_url}&name={name}&account={name}&password={password}&days={days}"
     
     try:
         resp = httpx.get(url, timeout=10.0)
@@ -65,11 +71,12 @@ def create_user(name: str, days: int):
             "created_at": _now(),
             "expires_at": _now() + days * 86400,
             "api_response": resp_data,
-            "status": "active"
+            "status": "active",
+            "pack": pack
         }
         _save(data)
         
-    return True, "Success", {"name": name, "password": password, "days": days}
+    return True, "Success", {"name": name, "password": password, "days": days, "pack": pack}
 
 def list_users() -> list:
     data = _load_raw()
