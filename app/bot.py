@@ -649,13 +649,17 @@ def _format_dicloak_success(data):
     exp_date = (datetime.now(timezone.utc) + timedelta(days=data['days'])).strftime("%Y-%m-%d %H:%M UTC")
     return (
         "Hi there,\n\n"
-        "Thank you for putting your trust in the QT Finance Team. ✔️ We are excited to have you on board! "
-        "Your subscription is now active, and to get started,Regarding the Options Depth and QuantData services, "
-        "please ensure that you create your own personal templates use the name gex_{number} for renamte template "
-        "please it's important really important\n\n"
-        f"**Username:** `{data['name']}`\n"
-        f"**Password:** `{data['password']}`\n"
-        f"**Expiration Date:** {exp_date}"
+        "Thank you for putting your trust in the QT Finance Team! ✔️ We are excited to have you on board.\n"
+        "Your subscription is now active.\n\n"
+        "⚠️ *Important Note for Options Depth and QuantData:*\n"
+        "Please ensure that you create your own personal templates using the name `gex_{number}` when renaming. This is a crucial step!\n\n"
+        "⬇️ *Download DICloak:*\n"
+        "🍏 *macOS:* [Apple Silicon](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_arm64.dmg) | [Intel](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_x64.dmg)\n"
+        "🪟 *Windows:* [64-bit](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_x64.exe) | [32-bit](https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_ia32.exe)\n\n"
+        "Once installed, log in using the credentials below:\n\n"
+        f"*Username:* `{data['name']}`\n"
+        f"*Password:* `{data['password']}`\n"
+        f"*Expiration Date:* {exp_date}"
     )
 
 async def cb_menu(update: Update, context):
