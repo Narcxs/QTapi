@@ -123,6 +123,10 @@ def search_users(username: str) -> list:
     return res
 
 def extend_user(uid: str, days: int) -> bool:
+    import urllib.parse
+    import httpx
+    from datetime import datetime, timezone
+    
     with _lock:
         data = _load_raw()
         if uid in data.get("users", {}):
@@ -131,7 +135,35 @@ def extend_user(uid: str, days: int) -> bool:
             current_exp = u.get("expires_at", _now())
             if current_exp < _now():
                 current_exp = _now()
-            u["expires_at"] = current_exp + (days * 86400)
+            
+            new_exp = current_exp + (days * 86400)
+            u["expires_at"] = new_exp
+            
+            # Appeler l'API Dicloak pour prolonger
+            member_id = u.get("api_response", {}).get("data", {}).get("member_id")
+            if member_id:
+                try:
+                    disuse_time = datetime.fromtimestamp(new_exp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    token = "I-KvzBRCFDY-JBsp"
+                    
+                    params = {
+                        "member_id": member_id,
+                        "token": token,
+                        "disuse_enable": "true",
+                        "time_zone": "UTC",
+                        "disuse_time": disuse_time
+                    }
+                    qs = urllib.parse.urlencode(params)
+                    edit_url = f"https://app.dicloak.com/gin/v1/api/member/open/edit?{qs}"
+                    
+                    resp = httpx.get(edit_url, timeout=10.0)
+                    resp_data = resp.json()
+                    
+                    if resp_data.get("code") not in (0, 200):
+                        log.error("Erreur API Dicloak /edit: %s", resp_data)
+                except Exception as e:
+                    log.error("Erreur HTTP Dicloak /edit: %s", e)
+
             _save(data)
             return True
         return False
