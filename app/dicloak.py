@@ -52,10 +52,10 @@ def _generate_password(length=12):
 
 def create_user(name: str, days: int, pack: str = "ultra"):
     password = _generate_password(12)
-    # Dicloak account must probably be alphanumeric
+    # Dicloak account must probably be alphanumeric and at least 6 characters long
     account = "".join(c for c in name if c.isalnum()).lower()
-    if len(account) < 4:
-        account += secrets.token_hex(2)
+    if len(account) < 6:
+        account += secrets.token_hex(3)
         
     # URL for dicloak API (GET request)
     base_url = PACK_URLS.get(pack)
