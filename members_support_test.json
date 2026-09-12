@@ -1,9 +1,0 @@
-https://app.dicloak.com/gin/v1/members [X-API-KEY] -> {"code":300003,"msg":"您的会话已过期。请重新登录。"}
-https://app.dicloak.com/gin/v1/members [X-HTTP-KEY] -> {"code":300003,"msg":"您的会话已过期。请重新登录。"}
-https://app.dicloak.com/gin/v1/members [Authorization] -> {"code":300003,"msg":"您的会话已过期。请重新登录。"}
-https://app.dicloak.com/api/v1/members [X-API-KEY] -> HTML Website Returned (Not an API)
-https://app.dicloak.com/api/v1/members [X-HTTP-KEY] -> HTML Website Returned (Not an API)
-https://app.dicloak.com/api/v1/members [Authorization] -> HTML Website Returned (Not an API)
-https://app.dicloak.com/v1/members [X-API-KEY] -> HTML Website Returned (Not an API)
-https://app.dicloak.com/v1/members [X-HTTP-KEY] -> HTML Website Returned (Not an API)
-https://app.dicloak.com/v1/members [Authorization] -> HTML Website Returned (Not an API)
