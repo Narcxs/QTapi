@@ -648,18 +648,22 @@ def _format_dicloak_success(data):
     from datetime import datetime, timezone, timedelta
     exp_date = (datetime.now(timezone.utc) + timedelta(days=data['days'])).strftime("%Y-%m-%d %H:%M UTC")
     return (
-        "Hi there,\n\n"
-        "Thank you for putting your trust in the QT Finance Team! ✔️ We are excited to have you on board.\n"
-        "Your subscription is now active.\n\n"
-        "⚠️ <b>Important Note for Options Depth and QuantData:</b>\n"
-        "Please ensure that you create your own personal templates using the name <code>gex_{number}</code> when renaming. This is a crucial step!\n\n"
-        "⬇️ <b>Download DICloak:</b>\n"
-        "🍏 <b>macOS:</b> <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_arm64.dmg\">Apple Silicon</a> | <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_x64.dmg\">Intel</a>\n"
-        "🪟 <b>Windows:</b> <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_x64.exe\">64-bit</a> | <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_ia32.exe\">32-bit</a>\n\n"
-        "Once installed, log in using the credentials below:\n\n"
+        "Welcome to the QT Finance Team!\n\n"
+        "Thank you for your trust. We are excited to have you on board, and your subscription is now fully active.\n\n"
+        "<b>Important Configuration (Options Depth & QuantData):</b>\n"
+        "When setting up your workspace, please ensure you rename and save your personal templates using the strict format: <code>gex_{number}</code>. This step is required for the systems to sync properly.\n\n"
+        "<b>1. Download DICloak Software:</b>\n"
+        "• <b>macOS:</b> <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_arm64.dmg\">Apple Silicon</a> | <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_mac_x64.dmg\">Intel</a>\n"
+        "• <b>Windows:</b> <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_x64.exe\">64-bit</a> | <a href=\"https://cdn1.dicloak.net/app/release/prod/DICloak_3.0.2_win_ia32.exe\">32-bit</a>\n\n"
+        "<b>2. Account Credentials:</b>\n"
+        "Once installed, please log in using the secure credentials provided below:\n\n"
+        f"<b>Account ID:</b> <code>{data.get('id', '')}</code>\n"
         f"<b>Username:</b> <code>{data.get('account', data['name'])}</code>\n"
         f"<b>Password:</b> <code>{data['password']}</code>\n"
-        f"<b>Expiration Date:</b> {exp_date}"
+        f"<b>Expiration Date:</b> {exp_date}\n\n"
+        "<b>3. Community & Updates:</b>\n"
+        "• <b>Announcements:</b> <a href=\"https://t.me/+O33QN8-IZL5hNzY0\">Join the main channel</a> for important info and updates.\n"
+        "• <b>Community Chat:</b> <a href=\"https://t.me/+fSJZrEyh2hNlOTZk\">Join the community</a> to connect with other members."
     )
 
 async def cb_menu(update: Update, context):
@@ -824,6 +828,7 @@ async def cb_menu(update: Update, context):
                 _format_dicloak_success(data),
                 parse_mode="HTML"
             )
+            await q.message.reply_text(f"💡 Info Admin : Vous pouvez gérer cet utilisateur avec la commande :\n`/dle {data.get('id', '')}`", parse_mode="Markdown")
         else:
             await q.message.reply_text(f"❌ Erreur lors de la création : {msg}")
         return
@@ -908,6 +913,7 @@ async def on_text(update: Update, context):
                     _format_dicloak_success(data),
                     parse_mode="HTML"
                 )
+                await update.message.reply_text(f"💡 Info Admin : Vous pouvez gérer cet utilisateur avec la commande :\n`/dle {data.get('id', '')}`", parse_mode="Markdown")
             else:
                 await update.message.reply_text(f"❌ Erreur lors de la création : {msg}")
             return

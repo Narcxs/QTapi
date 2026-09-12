@@ -107,7 +107,7 @@ def create_user(name: str, days: int, pack: str = "ultra"):
         }
         _save(data)
         
-    return True, "Success", {"name": name, "account": account, "password": password, "days": days, "pack": pack}
+    return True, "Success", {"id": user_id, "name": name, "account": account, "password": password, "days": days, "pack": pack}
 
 def list_users() -> list:
     data = _load_raw()
