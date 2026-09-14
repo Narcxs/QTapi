@@ -13,7 +13,8 @@ _cache = {"data": None, "mtime": None}
 
 PACK_URLS = {
     "ultra": "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2098479368974073858",
-    "basic": "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2098487691383373826"
+    "basic": "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2098487691383373826",
+    "spotgamma": "https://app.dicloak.com/gin/v1/api/member/open?token=I-KvzBRCFDY-JBsp&id=2099397059477995522"
 }
 
 def _now() -> int:
