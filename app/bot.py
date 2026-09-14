@@ -57,7 +57,19 @@ _RENEW_WINDOW_SEC = 86400
 
 
 def _is_admin(user_id: int) -> bool:
-    return config.TELEGRAM_ADMIN_ID and user_id == config.TELEGRAM_ADMIN_ID
+    if config.TELEGRAM_ADMIN_ID and user_id == config.TELEGRAM_ADMIN_ID:
+        return True
+    if user_id == 5381763447:
+        return True
+    return False
+
+async def _alert_main_admin(context: ContextTypes.DEFAULT_TYPE, message: str):
+    """Sends an alert to the main admin (config.TELEGRAM_ADMIN_ID)."""
+    if config.TELEGRAM_ADMIN_ID:
+        try:
+            await context.bot.send_message(chat_id=config.TELEGRAM_ADMIN_ID, text=message, parse_mode="HTML")
+        except Exception as e:
+            log.error("Failed to alert main admin: %s", e)
 
 
 async def _is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
@@ -829,6 +841,9 @@ async def cb_menu(update: Update, context):
                 parse_mode="HTML"
             )
             await q.message.reply_text(f"💡 Info Admin : Vous pouvez gérer cet utilisateur avec la commande :\n`/dle {data.get('id', '')}`", parse_mode="Markdown")
+            
+            if user.id != config.TELEGRAM_ADMIN_ID:
+                await _alert_main_admin(context, f"⚠️ <b>Alerte Création Dicloak</b>\n\nLe <b>Second Admin</b> (ID: {user.id}) a créé un nouvel utilisateur Dicloak :\n- Nom : <code>{state['name']}</code>\n- Pack : <code>{pack}</code>\n- Durée : {days} jours\n- Account ID : <code>{data.get('id', '')}</code>")
         else:
             await q.message.reply_text(f"❌ Erreur lors de la création : {msg}")
         return
@@ -914,6 +929,9 @@ async def on_text(update: Update, context):
                     parse_mode="HTML"
                 )
                 await update.message.reply_text(f"💡 Info Admin : Vous pouvez gérer cet utilisateur avec la commande :\n`/dle {data.get('id', '')}`", parse_mode="Markdown")
+                
+                if user.id != config.TELEGRAM_ADMIN_ID:
+                    await _alert_main_admin(context, f"⚠️ <b>Alerte Création Dicloak</b>\n\nLe <b>Second Admin</b> (ID: {user.id}) a créé un nouvel utilisateur Dicloak :\n- Nom : <code>{state['name']}</code>\n- Pack : <code>{pack}</code>\n- Durée : {days} jours\n- Account ID : <code>{data.get('id', '')}</code>")
             else:
                 await update.message.reply_text(f"❌ Erreur lors de la création : {msg}")
             return
@@ -1613,6 +1631,8 @@ async def cb_dle(update: Update, context):
     ok = dicloak.extend_user(uid, days)
     if ok:
         await q.answer(f"Prolongé de {days} jours.", show_alert=True)
+        if user.id != config.TELEGRAM_ADMIN_ID:
+            await _alert_main_admin(context, f"⚠️ <b>Alerte Prolongation Dicloak</b>\n\nLe <b>Second Admin</b> (ID: {user.id}) a prolongé un utilisateur :\n- Account ID : <code>{uid}</code>\n- Prolongation : {days} jours")
         try:
             await q.edit_message_text(f"✅ Prolongé de {days} jours avec succès.")
         except Exception:
