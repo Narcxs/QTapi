@@ -140,6 +140,7 @@ def extend_user(uid: str, days: int) -> bool:
             
             new_exp = current_exp + (days * 86400)
             u["expires_at"] = new_exp
+            u["status"] = "active"
             
             # Appeler l'API Dicloak pour prolonger
             member_id = u.get("api_response", {}).get("data", {}).get("member_id")
@@ -153,7 +154,8 @@ def extend_user(uid: str, days: int) -> bool:
                         "token": token,
                         "disuse_enable": "true",
                         "time_zone": "UTC",
-                        "disuse_time": disuse_time
+                        "disuse_time": disuse_time,
+                        "status": "ENABLED"
                     }
                     qs = urllib.parse.urlencode(params)
                     edit_url = f"https://app.dicloak.com/gin/v1/api/member/open/edit?{qs}"
