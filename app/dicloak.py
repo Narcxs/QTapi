@@ -124,7 +124,7 @@ def search_users(username: str) -> list:
             res.append((uid, u))
     return res
 
-def extend_user(uid: str, days: int) -> bool:
+def extend_user(uid: str, days: int) -> tuple[bool, str]:
     import urllib.parse
     import httpx
     from datetime import datetime, timezone
@@ -133,16 +133,12 @@ def extend_user(uid: str, days: int) -> bool:
         data = _load_raw()
         if uid in data.get("users", {}):
             u = data["users"][uid]
-            # if already expired, start from now
             current_exp = u.get("expires_at", _now())
             if current_exp < _now():
                 current_exp = _now()
             
             new_exp = current_exp + (days * 86400)
-            u["expires_at"] = new_exp
-            u["status"] = "active"
             
-            # Appeler l'API Dicloak pour prolonger
             member_id = u.get("api_response", {}).get("data", {}).get("member_id")
             if member_id:
                 try:
@@ -165,9 +161,13 @@ def extend_user(uid: str, days: int) -> bool:
                     
                     if resp_data.get("code") not in (0, 200):
                         log.error("Erreur API Dicloak /edit: %s", resp_data)
+                        return False, f"Dicloak API Error: {resp_data.get('msg', 'Unknown')} (Code: {resp_data.get('code')})"
                 except Exception as e:
                     log.error("Erreur HTTP Dicloak /edit: %s", e)
+                    return False, f"HTTP Error: {str(e)}"
 
+            u["expires_at"] = new_exp
+            u["status"] = "active"
             _save(data)
-            return True
-        return False
+            return True, "Success"
+        return False, "User not found locally"

@@ -1630,7 +1630,7 @@ async def cb_dle(update: Update, context):
         return
     _, uid, days = q.data.split(":")
     days = int(days)
-    ok = dicloak.extend_user(uid, days)
+    ok, msg = dicloak.extend_user(uid, days)
     if ok:
         await q.answer(f"Prolongé de {days} jours.", show_alert=True)
         if user.id != config.TELEGRAM_ADMIN_ID:
@@ -1640,7 +1640,7 @@ async def cb_dle(update: Update, context):
         except Exception:
             pass
     else:
-        await q.answer("Erreur: utilisateur introuvable.", show_alert=True)
+        await q.answer(f"Erreur: {msg}", show_alert=True)
 
 def main():
     if not config.TELEGRAM_BOT_TOKEN:
