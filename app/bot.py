@@ -778,16 +778,17 @@ async def cb_menu(update: Update, context):
             [InlineKeyboardButton("💎 Ultra Pack", callback_data="dicloak_create_ultra")],
             [InlineKeyboardButton("📦 Basic Pack", callback_data="dicloak_create_basic")],
             [InlineKeyboardButton("📊 Spotgamma", callback_data="dicloak_create_spotgamma")],
+            [InlineKeyboardButton("📈 QuantData", callback_data="dicloak_create_quantdata")],
             [InlineKeyboardButton("🔙 Back", callback_data="dicloak_menu")]
         ])
         await q.edit_message_text("Sélectionnez le type d'abonnement à créer :", reply_markup=kb)
         return
-    elif q.data in ("dicloak_create_ultra", "dicloak_create_basic", "dicloak_create_spotgamma"):
+    elif q.data in ("dicloak_create_ultra", "dicloak_create_basic", "dicloak_create_spotgamma", "dicloak_create_quantdata"):
         if not _is_admin(user.id):
             return
         await q.answer()
         pack = q.data.replace("dicloak_create_", "")
-        pack_name = "Ultra Pack" if pack == "ultra" else "Basic Pack" if pack == "basic" else "Spotgamma"
+        pack_name = {"ultra": "Ultra Pack", "basic": "Basic Pack", "spotgamma": "Spotgamma", "quantdata": "QuantData"}.get(pack, "Pack")
         _dicloak_state[user.id] = {"step": "NAME", "name": "", "days": 0, "pack": pack}
         await q.message.reply_text(f"Veuillez entrer le nom d'utilisateur Dicloak ({pack_name}) :")
         return
@@ -1679,7 +1680,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^menu_(token|premium|renew|renew_prem|health|cv|mq|mq_trial|start|reset_ip|mq_reset_ip)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mq_(ES|NQ|VIX|GC|back)$"))
     app.add_handler(CallbackQueryHandler(cb_menu, pattern="^mqt_(menu|7|14|30)$"))
-    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^dicloak_(menu|create|create_ultra|create_basic|create_spotgamma|list|search|exp:.*)$"))
+    app.add_handler(CallbackQueryHandler(cb_menu, pattern="^dicloak_(menu|create|create_ultra|create_basic|create_spotgamma|create_quantdata|list|search|exp:.*)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_tokens, pattern=r"^adm_tokens:\d+:(all|prem|free)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_revoke, pattern=r"^adm_r:[\w\-]+:\d+:(all|prem|free)$"))
     app.add_handler(CallbackQueryHandler(cb_admin_unrevoke, pattern=r"^adm_u:[\w\-]+:\d+:(all|prem|free)$"))
